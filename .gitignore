@@ -1,0 +1,7 @@
+devops-status-fe/node_modules
+devops-status-fe/.nuxt
+devops-status-fe/.output
+devops-status-fe/dist
+devops-status-be/bin/
+.env
+*.env.local
