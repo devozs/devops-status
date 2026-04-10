@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/handler"
@@ -81,6 +83,25 @@ func (h *ServicesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler.WriteJSON(w, http.StatusOK, serviceDetailResponse{Service: *svc, TelemetryLinks: links})
+}
+
+// Topology returns linked infra and telemetries for the resource map UI.
+func (h *ServicesHandler) Topology(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		handler.WriteError(w, http.StatusBadRequest, "invalid service id")
+		return
+	}
+	topo, err := h.store.BuildResourceTopologyForService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "service not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load topology")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, topo)
 }
 
 // ListTelemetrySamples returns recent sample_results for one service telemetry link (query: telemetry_id, optional probe_kind, limit).

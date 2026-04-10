@@ -8,6 +8,8 @@ import (
 
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/handler"
+	"github.com/devops-status/be/internal/incidentenrich"
+	"github.com/devops-status/be/internal/model"
 	"github.com/devops-status/be/internal/store"
 )
 
@@ -20,12 +22,18 @@ func NewIncidentsHandler(s *store.Store) *IncidentsHandler {
 }
 
 func (h *IncidentsHandler) List(w http.ResponseWriter, r *http.Request) {
-	incidents, err := h.store.ListIncidents(r.Context(), 50, "")
+	ctx := r.Context()
+	incidents, err := h.store.ListIncidents(ctx, 50, "", nil, nil)
 	if err != nil {
 		handler.WriteError(w, http.StatusInternalServerError, "failed to list incidents")
 		return
 	}
-	handler.WriteJSON(w, http.StatusOK, incidents)
+	out, err := incidentenrich.List(ctx, h.store, incidents)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to list incidents")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *IncidentsHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +48,12 @@ func (h *IncidentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updates, _ := h.store.ListIncidentUpdates(r.Context(), id)
-	handler.WriteJSON(w, http.StatusOK, map[string]any{"incident": inc, "updates": updates})
+	enriched, err := incidentenrich.List(r.Context(), h.store, []model.Incident{*inc})
+	if err != nil || len(enriched) == 0 {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load incident")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, map[string]any{"incident": enriched[0], "updates": updates})
 }
 
 type updateIncidentRequest struct {
@@ -62,7 +75,12 @@ func (h *IncidentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Status != "" {
-		if err := h.store.UpdateIncidentStatus(r.Context(), id, req.Status); err != nil {
+		var rb *string
+		if req.Status == "resolved" {
+			v := "admin"
+			rb = &v
+		}
+		if err := h.store.UpdateIncidentStatus(r.Context(), id, req.Status, rb); err != nil {
 			handler.WriteError(w, http.StatusInternalServerError, "failed to update status")
 			return
 		}

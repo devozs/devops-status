@@ -11,13 +11,13 @@
     <div class="table-panel">
       <div class="table-split-scroll">
         <table class="data-table data-table--head">
-          <colgroup>
-            <col style="width: 34%" />
-            <col style="width: 14%" />
-            <col style="width: 16%" />
-            <col style="width: 12%" />
-            <col style="width: 28%" />
-          </colgroup>
+            <colgroup>
+              <col style="width: 32%" />
+              <col style="width: 12%" />
+              <col style="width: 14%" />
+              <col style="width: 11%" />
+              <col style="width: 31%" />
+            </colgroup>
           <thead>
             <tr>
               <th>Environment</th>
@@ -31,11 +31,11 @@
         <div class="table-body-shell">
           <table class="data-table data-table--body">
             <colgroup>
-              <col style="width: 34%" />
-              <col style="width: 14%" />
-              <col style="width: 16%" />
+              <col style="width: 32%" />
               <col style="width: 12%" />
-              <col style="width: 28%" />
+              <col style="width: 14%" />
+              <col style="width: 11%" />
+              <col style="width: 31%" />
             </colgroup>
             <tbody>
               <tr v-for="env in environments" :key="env.id">
@@ -62,6 +62,7 @@
                 <td class="table-row-actions">
                   <button type="button" class="btn btn-sm" @click="editEnv(env)">Edit</button>
                   <button type="button" class="btn btn-sm" @click="openHistory(env)">History</button>
+                  <button type="button" class="btn btn-sm" @click="openResourceMap(env)">Map</button>
                   <button type="button" class="btn btn-sm btn-danger" @click="requestDeleteEnv(env)">Delete</button>
                 </td>
               </tr>
@@ -73,6 +74,16 @@
         </div>
       </div>
     </div>
+
+    <ResourceTopologyModal
+      :open="topologyOpen"
+      :title="topologyTitle"
+      :loading="topologyLoading"
+      :error="topologyError"
+      :topology="topologyData"
+      :session-key="topologySessionKey"
+      @close="closeResourceMap"
+    />
 
     <AdminDeleteConfirmDialog
       v-model="deleteOpen"
@@ -302,10 +313,12 @@
 
 <script setup lang="ts">
 import { Boxes, Plus } from 'lucide-vue-next'
+import type { ResourceTopology } from '~/types/resource-topology'
 
 definePageMeta({ layout: 'admin' })
 
 const { apiFetch } = useApi()
+const { fetchAdmin: fetchTopologyAdmin } = useResourceTopology()
 
 type ClusterRow = {
   id: string
@@ -363,6 +376,12 @@ type TelemetrySampleRow = {
 
 const environments = ref<EnvRow[]>([])
 const historyEnv = ref<EnvRow | null>(null)
+const topologyOpen = ref(false)
+const topologyTitle = ref('')
+const topologyLoading = ref(false)
+const topologyError = ref('')
+const topologyData = ref<ResourceTopology | null>(null)
+const topologySessionKey = ref(0)
 const historyLinks = ref<EnvLink[]>([])
 const historyTabTelemetryId = ref('')
 const historyLoading = ref(false)
@@ -700,6 +719,28 @@ function closeHistory() {
   historyTabTelemetryId.value = ''
   historySamples.value = []
   historyCliExpanded.value = {}
+}
+
+function closeResourceMap() {
+  topologyOpen.value = false
+  topologyData.value = null
+  topologyError.value = ''
+}
+
+async function openResourceMap(env: EnvRow) {
+  topologySessionKey.value += 1
+  topologyTitle.value = env.name
+  topologyOpen.value = true
+  topologyLoading.value = true
+  topologyError.value = ''
+  topologyData.value = null
+  try {
+    topologyData.value = await fetchTopologyAdmin('environment', env.id)
+  } catch {
+    topologyError.value = 'Could not load resource map.'
+  } finally {
+    topologyLoading.value = false
+  }
 }
 
 async function loadEnvironments() {

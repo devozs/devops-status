@@ -86,14 +86,17 @@ type Incident struct {
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
-// AdminIncidentListItem is the admin incidents table row with resolved target and infra context.
+// AdminIncidentListItem is one row for GET /api/admin/incidents (flattened incident + joins).
 type AdminIncidentListItem struct {
 	Incident
-	TargetName      string                 `json:"target_name"`
-	TargetSlug      string                 `json:"target_slug"`
-	Infra           *AdminIncidentInfra    `json:"infra,omitempty"`
-	LinkedTelemetry []AdminLinkedTelemetry `json:"linked_telemetry"`
-	Resolution      string                 `json:"resolution"` // open | automatic | manual | unknown
+	TargetName          string                 `json:"target_name"`
+	TargetSlug          string                 `json:"target_slug"`
+	Infra               *AdminIncidentInfra    `json:"infra,omitempty"`
+	LinkedTelemetry     []AdminLinkedTelemetry `json:"linked_telemetry"`
+	Resolution          string                 `json:"resolution"` // open | automatic | manual | unknown
+	QosPassRatePercent  *float64               `json:"qos_pass_rate_percent,omitempty"`
+	IssueMessage        *string                `json:"issue_message,omitempty"`
+	ResolutionMessage   *string                `json:"resolution_message,omitempty"`
 }
 
 type AdminIncidentInfra struct {
@@ -150,6 +153,47 @@ type EnvironmentTelemetryLink struct {
 	ConsecutiveSuccessToRecover  int       `json:"consecutive_success_to_recover"`
 	CreatedAt                    time.Time `json:"created_at"`
 	UpdatedAt                    time.Time `json:"updated_at"`
+}
+
+// ResourceTopology is a read-only graph DTO for admin and public resource maps.
+type ResourceTopology struct {
+	Kind         string                         `json:"kind"` // service | environment
+	Resource     ResourceTopologyResource       `json:"resource"`
+	Infra        *ResourceTopologyInfra         `json:"infra,omitempty"`
+	Telemetries  []ResourceTopologyTelemetryRow `json:"telemetries"`
+}
+
+type ResourceTopologyResource struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	Slug string    `json:"slug"`
+}
+
+// ResourceTopologyInfra is one of service_provider or k8s_cluster (discriminated by Type).
+type ResourceTopologyInfra struct {
+	Type         string    `json:"type"` // service_provider | k8s_cluster
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	ProviderType string    `json:"provider_type,omitempty"`
+}
+
+type ResourceTopologyTelemetryRef struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name,omitempty"`
+	Adapter     string    `json:"adapter"`
+}
+
+type ResourceTopologyLinkTuning struct {
+	SampleIntervalSec           int `json:"sample_interval_sec"`
+	WindowSize                  int `json:"window_size"`
+	ConsecutiveFailuresToDown   int `json:"consecutive_failures_to_down"`
+	ConsecutiveSuccessToRecover int `json:"consecutive_success_to_recover"`
+}
+
+type ResourceTopologyTelemetryRow struct {
+	Telemetry ResourceTopologyTelemetryRef `json:"telemetry"`
+	Link      ResourceTopologyLinkTuning   `json:"link"`
 }
 
 type AuditLog struct {

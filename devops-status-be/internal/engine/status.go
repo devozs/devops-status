@@ -30,13 +30,13 @@ func (e *StatusEvaluator) Evaluate(ctx context.Context, targetType string, targe
 
 	switch probeKind {
 	case "operational":
-		e.evaluateOperational(ctx, targetType, targetID, samples, failuresDown, successUp)
+		e.evaluateOperational(ctx, targetType, targetID, telemetryID, adapter, samples, failuresDown, successUp)
 	case "qos":
-		e.evaluateQoS(ctx, targetType, targetID, samples, adapter, qosThresholds)
+		e.evaluateQoS(ctx, targetType, targetID, telemetryID, adapter, qosThresholds, samples)
 	}
 }
 
-func (e *StatusEvaluator) evaluateOperational(ctx context.Context, targetType string, targetID uuid.UUID, samples []store.SampleRecord, failuresDown, successUp int) {
+func (e *StatusEvaluator) evaluateOperational(ctx context.Context, targetType string, targetID uuid.UUID, telemetryID *uuid.UUID, adapter string, samples []store.SampleRecord, failuresDown, successUp int) {
 	consecutiveFails := 0
 	consecutiveSuccess := 0
 
@@ -51,13 +51,13 @@ func (e *StatusEvaluator) evaluateOperational(ctx context.Context, targetType st
 	}
 
 	if consecutiveFails >= failuresDown {
-		e.incident.OnDown(ctx, targetType, targetID)
+		e.incident.OnDown(ctx, targetType, targetID, telemetryID, adapter)
 	} else if consecutiveSuccess >= successUp {
 		e.incident.OnRecovery(ctx, targetType, targetID)
 	}
 }
 
-func (e *StatusEvaluator) evaluateQoS(ctx context.Context, targetType string, targetID uuid.UUID, samples []store.SampleRecord, adapter string, qosThresholds []byte) {
+func (e *StatusEvaluator) evaluateQoS(ctx context.Context, targetType string, targetID uuid.UUID, telemetryID *uuid.UUID, adapter string, qosThresholds []byte, samples []store.SampleRecord) {
 	if len(samples) == 0 {
 		return
 	}
@@ -67,7 +67,7 @@ func (e *StatusEvaluator) evaluateQoS(ctx context.Context, targetType string, ta
 	slog.Debug("qos evaluation", "target_type", targetType, "target_id", targetID, "pass_rate", passRate, "level", level, "adapter", adapter)
 
 	if level == "red" {
-		e.incident.OnDegraded(ctx, targetType, targetID, passRate)
+		e.incident.OnDegraded(ctx, targetType, targetID, telemetryID, adapter, passRate, level)
 	} else if level == "green" {
 		e.incident.OnRecovery(ctx, targetType, targetID)
 	}

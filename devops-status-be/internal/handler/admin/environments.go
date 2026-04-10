@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/handler"
@@ -80,6 +82,25 @@ func (h *EnvironmentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handler.WriteJSON(w, http.StatusOK, environmentDetailResponse{Environment: *env, TelemetryLinks: links})
+}
+
+// Topology returns linked infra and telemetries for the resource map UI.
+func (h *EnvironmentsHandler) Topology(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		handler.WriteError(w, http.StatusBadRequest, "invalid environment id")
+		return
+	}
+	topo, err := h.store.BuildResourceTopologyForEnvironment(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "environment not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load topology")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, topo)
 }
 
 // ListTelemetrySamples returns recent sample_results for one environment telemetry link (query: telemetry_id, optional probe_kind, limit).

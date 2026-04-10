@@ -4,10 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/devops-status/be/internal/handler"
+	"github.com/devops-status/be/internal/model"
 	"github.com/devops-status/be/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,25 +22,66 @@ func NewStatusHandler(s *store.Store) *StatusHandler {
 	return &StatusHandler{store: s}
 }
 
+type publicIncidentStub struct {
+	ID                string     `json:"id"`
+	Title             string     `json:"title"`
+	Severity          string     `json:"severity"`
+	Status            string     `json:"status"`
+	StartedAt         time.Time  `json:"started_at"`
+	ResolvedAt        *time.Time `json:"resolved_at,omitempty"`
+	SourceTelemetryID *string    `json:"source_telemetry_id,omitempty"`
+}
+
 type serviceStatus struct {
-	ID          string             `json:"id"`
-	Name        string             `json:"name"`
-	Slug        string             `json:"slug"`
-	Description string             `json:"description"`
-	Status      string             `json:"status"`
-	UptimePct   float64            `json:"uptime_pct"`
-	Days        []store.DailyRollup `json:"days"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Slug            string                 `json:"slug"`
+	Description     string                 `json:"description"`
+	Status          string                 `json:"status"`
+	UptimePct       float64                `json:"uptime_pct"`
+	Days            []store.DailyRollup    `json:"days"`
+	RecentIncidents []publicIncidentStub   `json:"recent_incidents"`
 }
 
 type envStatus struct {
-	ID          string             `json:"id"`
-	Name        string             `json:"name"`
-	Slug        string             `json:"slug"`
-	Description string             `json:"description"`
-	EnvType     string             `json:"env_type"`
-	Status      string             `json:"status"`
-	UptimePct   float64            `json:"uptime_pct"`
-	Days        []store.DailyRollup `json:"days"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Slug            string                 `json:"slug"`
+	Description     string                 `json:"description"`
+	EnvType         string                 `json:"env_type"`
+	Status          string                 `json:"status"`
+	UptimePct       float64                `json:"uptime_pct"`
+	Days            []store.DailyRollup    `json:"days"`
+	RecentIncidents []publicIncidentStub   `json:"recent_incidents"`
+}
+
+type incidentTargetKey struct {
+	typ string
+	id  uuid.UUID
+}
+
+func recentStubsFor(m map[incidentTargetKey][]publicIncidentStub, typ string, id uuid.UUID) []publicIncidentStub {
+	s := m[incidentTargetKey{typ: typ, id: id}]
+	if s == nil {
+		return []publicIncidentStub{}
+	}
+	return s
+}
+
+func incidentToPublicStub(inc model.Incident) publicIncidentStub {
+	st := publicIncidentStub{
+		ID:        inc.ID.String(),
+		Title:     inc.Title,
+		Severity:  inc.Severity,
+		Status:    inc.Status,
+		StartedAt: inc.StartedAt,
+		ResolvedAt: inc.ResolvedAt,
+	}
+	if inc.SourceTelemetryID != nil {
+		s := inc.SourceTelemetryID.String()
+		st.SourceTelemetryID = &s
+	}
+	return st
 }
 
 func (h *StatusHandler) Summary(w http.ResponseWriter, r *http.Request) {
@@ -56,9 +100,29 @@ func (h *StatusHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	overallStatus := "operational"
 	overallMessage := "All Systems Operational"
 
+	since := time.Now().UTC().AddDate(0, 0, -90)
+	svcIDs := make([]uuid.UUID, 0, len(services))
+	for _, svc := range services {
+		svcIDs = append(svcIDs, svc.ID)
+	}
+	envIDs := make([]uuid.UUID, 0, len(environments))
+	for _, env := range environments {
+		envIDs = append(envIDs, env.ID)
+	}
+	allIncidents, err := h.store.ListIncidentsForPublicTargets(r.Context(), svcIDs, envIDs, since)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load incidents")
+		return
+	}
+	incByTarget := make(map[incidentTargetKey][]publicIncidentStub)
+	for _, inc := range allIncidents {
+		k := incidentTargetKey{typ: inc.TargetType, id: inc.TargetID}
+		incByTarget[k] = append(incByTarget[k], incidentToPublicStub(inc))
+	}
+
 	var svcStatuses []serviceStatus
 	for _, svc := range services {
-		rollups, _ := h.store.GetDailyRollups(r.Context(), "service", svc.ID, 90)
+		rollups, _ := h.store.GetDailyRollups(r.Context(), "service", svc.ID, 90, nil)
 		status := "operational"
 		uptimePct := 100.0
 
@@ -80,12 +144,13 @@ func (h *StatusHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		svcStatuses = append(svcStatuses, serviceStatus{
 			ID: svc.ID.String(), Name: svc.Name, Slug: svc.Slug,
 			Description: svc.Description, Status: status, UptimePct: uptimePct, Days: rollups,
+			RecentIncidents: recentStubsFor(incByTarget, "service", svc.ID),
 		})
 	}
 
 	var envStatuses []envStatus
 	for _, env := range environments {
-		rollups, _ := h.store.GetDailyRollups(r.Context(), "environment", env.ID, 90)
+		rollups, _ := h.store.GetDailyRollups(r.Context(), "environment", env.ID, 90, nil)
 		status := "operational"
 		uptimePct := 100.0
 
@@ -108,6 +173,7 @@ func (h *StatusHandler) Summary(w http.ResponseWriter, r *http.Request) {
 			ID: env.ID.String(), Name: env.Name, Slug: env.Slug,
 			Description: env.Description, EnvType: env.EnvType,
 			Status: status, UptimePct: uptimePct, Days: rollups,
+			RecentIncidents: recentStubsFor(incByTarget, "environment", env.ID),
 		})
 	}
 
@@ -267,6 +333,54 @@ func (h *StatusHandler) ServiceTelemetryBreakdown(w http.ResponseWriter, r *http
 		},
 		"telemetries": rows,
 	})
+}
+
+// ServiceTopology returns infra + linked telemetries for a public service (404 if missing or not public).
+func (h *StatusHandler) ServiceTopology(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	svc, err := h.store.GetServiceBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "service not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load service")
+		return
+	}
+	if !svc.IsPublic {
+		handler.WriteError(w, http.StatusNotFound, "service not found")
+		return
+	}
+	topo, err := h.store.BuildResourceTopologyForService(r.Context(), svc.ID)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load topology")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, topo)
+}
+
+// EnvironmentTopology returns infra + linked telemetries for a public environment (404 if missing or not public).
+func (h *StatusHandler) EnvironmentTopology(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	env, err := h.store.GetEnvironmentBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "environment not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load environment")
+		return
+	}
+	if !env.IsPublic {
+		handler.WriteError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+	topo, err := h.store.BuildResourceTopologyForEnvironment(r.Context(), env.ID)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load topology")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, topo)
 }
 
 func (h *StatusHandler) ListServices(w http.ResponseWriter, r *http.Request) {

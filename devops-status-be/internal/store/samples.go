@@ -204,20 +204,34 @@ func dailyRollupsFromRows(rows pgx.Rows) ([]DailyRollup, error) {
 	return rollups, nil
 }
 
-func (s *Store) GetDailyRollups(ctx context.Context, targetType string, targetID uuid.UUID, days int) ([]DailyRollup, error) {
+// GetDailyRollups returns daily availability for [endExclusive - days, endExclusive) in UTC.
+// If endExclusiveUTC is nil, end is start of tomorrow UTC (include all samples through today UTC).
+func (s *Store) GetDailyRollups(ctx context.Context, targetType string, targetID uuid.UUID, days int, endExclusiveUTC *time.Time) ([]DailyRollup, error) {
+	end := defaultRollupEndExclusive(endExclusiveUTC)
 	rows, err := s.pool.Query(ctx,
 		`SELECT date_trunc('day', sampled_at)::date AS day,
 		        COUNT(*)::int AS total,
 		        COUNT(*) FILTER (WHERE NOT success)::int AS failed,
 		        CASE WHEN COUNT(*) > 0 THEN ROUND(100.0 * COUNT(*) FILTER (WHERE success) / COUNT(*), 2) ELSE 100 END AS avail_pct
 		 FROM sample_results
-		 WHERE target_type=$1 AND target_id=$2 AND sampled_at >= now() - ($3 || ' days')::interval
+		 WHERE target_type=$1 AND target_id=$2
+		   AND sampled_at >= $4::timestamptz - ($3 || ' days')::interval
+		   AND sampled_at < $4::timestamptz
 		 GROUP BY day ORDER BY day ASC`,
-		targetType, targetID, fmt.Sprintf("%d", days))
+		targetType, targetID, fmt.Sprintf("%d", days), end)
 	if err != nil {
 		return nil, fmt.Errorf("get daily rollups: %w", err)
 	}
 	return dailyRollupsFromRows(rows)
+}
+
+func defaultRollupEndExclusive(endExclusiveUTC *time.Time) time.Time {
+	if endExclusiveUTC != nil && !endExclusiveUTC.IsZero() {
+		return *endExclusiveUTC
+	}
+	now := time.Now().UTC()
+	y, m, d := now.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
 }
 
 // GetDailyRollupsForEnvironmentTelemetry limits rollups to samples tagged with the given telemetry_id (per-link series).

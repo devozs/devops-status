@@ -34,24 +34,30 @@
 
     <section v-if="incidents?.length" class="status-section">
       <h2 class="section-title">Past Incidents</h2>
+      <p class="incidents-hint">Select an incident to see target, infra, telemetry, and update history.</p>
       <div class="incident-list">
-        <div v-for="inc in incidents" :key="inc.id" class="incident-item">
-          <div class="incident-header">
-            <span class="incident-title" :class="'severity--' + inc.severity">{{ inc.title }}</span>
-            <span class="incident-date">{{ formatDate(inc.started_at) }}</span>
-          </div>
-          <span class="incident-status">{{ inc.status }}</span>
-        </div>
+        <PastIncidentCard v-for="inc in incidents" :key="inc.id" :incident="inc" />
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
+import PastIncidentCard from '~/components/PastIncidentCard.vue'
+import type { IncidentDisplayItem } from '~/types/incident-display'
+import type { StatusSummaryItem } from '~/types/status-summary'
+
 const { apiFetch } = useApi()
 
+interface StatusSummaryPayload {
+  status: string
+  message: string
+  services: StatusSummaryItem[]
+  environments: StatusSummaryItem[]
+}
+
 const { data: statusData } = await useAsyncData('status-summary', () =>
-  apiFetch<any>('/api/public/status/summary'),
+  apiFetch<StatusSummaryPayload>('/api/public/status/summary'),
   {
     default: () => ({
       status: 'operational',
@@ -63,13 +69,9 @@ const { data: statusData } = await useAsyncData('status-summary', () =>
 )
 
 const { data: incidents } = await useAsyncData('recent-incidents', () =>
-  apiFetch<any[]>('/api/public/incidents?limit=5'),
+  apiFetch<IncidentDisplayItem[]>('/api/public/incidents?limit=5'),
   { default: () => [] },
 )
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
 </script>
 
 <style scoped>
@@ -81,11 +83,5 @@ function formatDate(iso: string) {
 .section-title { font-size: 1.15rem; font-weight: 600; margin-bottom: 16px; }
 .card-list { display: flex; flex-direction: column; gap: 12px; }
 .incident-list { display: flex; flex-direction: column; gap: 12px; }
-.incident-item { border-left: 3px solid var(--color-orange); padding: 12px 16px; background: var(--color-bg); border: 1px solid var(--color-border-strong); border-radius: 0 var(--radius) var(--radius) 0; box-shadow: var(--shadow-card); }
-.incident-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.incident-title { font-weight: 600; font-size: 0.9rem; }
-.severity--major { color: var(--color-red); }
-.severity--minor { color: var(--color-orange); }
-.incident-date { font-size: 0.8rem; color: var(--color-text-secondary); }
-.incident-status { font-size: 0.8rem; color: var(--color-text-secondary); text-transform: capitalize; }
+.incidents-hint { font-size: 0.85rem; color: var(--color-text-secondary); margin: -8px 0 12px; }
 </style>

@@ -164,7 +164,7 @@ export function useAdminDashboardData() {
         incidentsTotal.value = arr.length
         incidents.value = arr.slice(0, lim).map((row: any) => ({
           main: truncateText(String(row.title || '—'), 48),
-          meta: row.status ? String(row.status) : undefined,
+          meta: [row.target_name, row.status].filter(Boolean).join(' · ') || undefined,
         }))
       })
       .catch((e) => {

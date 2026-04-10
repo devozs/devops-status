@@ -2,6 +2,7 @@ package public
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -25,7 +26,12 @@ func (h *HistoryHandler) ServiceHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rollups, err := h.store.GetDailyRollups(r.Context(), "service", svc.ID, 90)
+	endPtr, err := historyEndExclusiveParam(r)
+	if err != nil {
+		handler.WriteError(w, http.StatusBadRequest, "invalid end")
+		return
+	}
+	rollups, err := h.store.GetDailyRollups(r.Context(), "service", svc.ID, 90, endPtr)
 	if err != nil {
 		handler.WriteError(w, http.StatusInternalServerError, "failed to load history")
 		return
@@ -45,7 +51,12 @@ func (h *HistoryHandler) EnvironmentHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	rollups, err := h.store.GetDailyRollups(r.Context(), "environment", env.ID, 90)
+	endPtr, err := historyEndExclusiveParam(r)
+	if err != nil {
+		handler.WriteError(w, http.StatusBadRequest, "invalid end")
+		return
+	}
+	rollups, err := h.store.GetDailyRollups(r.Context(), "environment", env.ID, 90, endPtr)
 	if err != nil {
 		handler.WriteError(w, http.StatusInternalServerError, "failed to load history")
 		return
@@ -55,4 +66,19 @@ func (h *HistoryHandler) EnvironmentHistory(w http.ResponseWriter, r *http.Reque
 		"environment": env,
 		"days":        rollups,
 	})
+}
+
+// historyEndExclusiveParam returns exclusive UTC end instant for rollup window (samples with day <= end date).
+// Query end=YYYY-MM-DD → exclusive midnight at start of the next calendar day in UTC.
+func historyEndExclusiveParam(r *http.Request) (*time.Time, error) {
+	v := r.URL.Query().Get("end")
+	if v == "" {
+		return nil, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", v, time.UTC)
+	if err != nil {
+		return nil, err
+	}
+	excl := t.AddDate(0, 0, 1)
+	return &excl, nil
 }

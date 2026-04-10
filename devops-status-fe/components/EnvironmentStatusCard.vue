@@ -1,6 +1,6 @@
 <template>
   <div class="environment-status-card">
-    <ServiceCard :item="item" />
+    <ServiceCard :item="item" :recent-incidents="item.recent_incidents ?? []" />
     <div class="env-card__toolbar">
       <button
         type="button"
@@ -12,7 +12,20 @@
         <span>{{ expanded ? 'Hide' : 'Show' }} per-telemetry breakdown</span>
         <span class="env-card__chev" :class="{ 'env-card__chev--open': expanded }" aria-hidden="true">▾</span>
       </button>
+      <button type="button" class="env-card__toggle" @click="openResourceMap">
+        <span>Resource map</span>
+      </button>
     </div>
+
+    <ResourceTopologyModal
+      :open="topologyOpen"
+      :title="topologyTitle"
+      :loading="topologyLoading"
+      :error="topologyError"
+      :topology="topologyData"
+      :session-key="topologySessionKey"
+      @close="closeResourceMap"
+    />
     <div
       v-show="expanded"
       :id="breakdownId"
@@ -32,7 +45,13 @@
             <div class="env-card__sub-head">{{ telemetryLabel(row) }}</div>
             <p class="env-card__muted">No per-probe history yet for this telemetry.</p>
           </template>
-          <ServiceCard v-else :item="telemetryRowToItem(row)" variant="nested" />
+          <ServiceCard
+            v-else
+            :item="telemetryRowToItem(row)"
+            variant="nested"
+            :recent-incidents="item.recent_incidents ?? []"
+            :telemetry-id="row.telemetry_id"
+          />
         </div>
       </template>
     </div>
@@ -40,20 +59,8 @@
 </template>
 
 <script setup lang="ts">
-interface DayData {
-  date: string
-  availability_pct: number
-  qos_level: string
-}
-
-interface StatusItem {
-  name: string
-  slug: string
-  description?: string
-  status?: string
-  uptime_pct?: number
-  days?: DayData[]
-}
+import type { ResourceTopology } from '~/types/resource-topology'
+import type { StatusSummaryDay, StatusSummaryItem } from '~/types/status-summary'
 
 interface BreakdownTelemetry {
   telemetry_id: string
@@ -61,7 +68,7 @@ interface BreakdownTelemetry {
   display_name?: string
   status: string
   uptime_pct: number
-  days: DayData[]
+  days: StatusSummaryDay[]
   has_per_telemetry_samples: boolean
 }
 
@@ -71,7 +78,7 @@ interface BreakdownResponse {
 
 const props = withDefaults(
   defineProps<{
-    item: StatusItem
+    item: StatusSummaryItem
     slug: string
     /** Public breakdown API path: environments vs services */
     resource?: 'environment' | 'service'
@@ -80,8 +87,15 @@ const props = withDefaults(
 )
 
 const { apiFetch } = useApi()
+const { fetchPublic: fetchTopologyPublic } = useResourceTopology()
 
 const expanded = ref(false)
+const topologyOpen = ref(false)
+const topologyTitle = ref('')
+const topologyLoading = ref(false)
+const topologyError = ref('')
+const topologyData = ref<ResourceTopology | null>(null)
+const topologySessionKey = ref(0)
 const breakdownLoading = ref(false)
 const breakdown = ref<BreakdownResponse | null>(null)
 const breakdownError = ref('')
@@ -97,7 +111,7 @@ function telemetryLabel(row: BreakdownTelemetry): string {
   return row.name
 }
 
-function telemetryRowToItem(row: BreakdownTelemetry): StatusItem {
+function telemetryRowToItem(row: BreakdownTelemetry): StatusSummaryItem {
   return {
     name: telemetryLabel(row),
     slug: row.telemetry_id,
@@ -129,6 +143,29 @@ async function toggle() {
   expanded.value = next
   if (next) await loadBreakdown()
 }
+
+function closeResourceMap() {
+  topologyOpen.value = false
+  topologyData.value = null
+  topologyError.value = ''
+}
+
+async function openResourceMap() {
+  topologySessionKey.value += 1
+  topologyTitle.value = props.item.name
+  topologyOpen.value = true
+  topologyLoading.value = true
+  topologyError.value = ''
+  topologyData.value = null
+  try {
+    const kind = props.resource === 'service' ? 'service' : 'environment'
+    topologyData.value = await fetchTopologyPublic(kind, props.slug)
+  } catch {
+    topologyError.value = 'Could not load resource map. It may only be available for public resources.'
+  } finally {
+    topologyLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -138,6 +175,10 @@ async function toggle() {
   gap: 0;
 }
 .env-card__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
   margin-top: -4px;
   padding: 0 4px 8px;
 }
