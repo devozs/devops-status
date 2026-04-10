@@ -151,13 +151,18 @@ const form = ref({
 })
 
 async function loadAll() {
-  ;[serviceBindings.value, envBindings.value, services.value, environments.value, dataSources.value] = await Promise.all([
+  const [sb, eb, svc, env, ds] = await Promise.all([
     apiFetch<any[]>('/api/admin/bindings/services'),
     apiFetch<any[]>('/api/admin/bindings/environments'),
     apiFetch<any[]>('/api/admin/services'),
     apiFetch<any[]>('/api/admin/environments'),
     apiFetch<any[]>('/api/admin/data-sources'),
   ])
+  serviceBindings.value = sb || []
+  envBindings.value = eb || []
+  services.value = svc || []
+  environments.value = env || []
+  dataSources.value = ds || []
 }
 
 function serviceName(id: string) {

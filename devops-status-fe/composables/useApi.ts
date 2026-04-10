@@ -1,6 +1,6 @@
 export const useApi = () => {
   const config = useRuntimeConfig()
-  const baseURL = config.public.apiBase as string
+  const baseURL = (config.public.apiBase as string) || 'http://localhost:8080'
 
   const apiFetch = <T>(path: string, opts: Record<string, any> = {}): Promise<T> => {
     return $fetch<T>(`${baseURL}${path}`, {

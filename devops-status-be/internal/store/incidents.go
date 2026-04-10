@@ -33,7 +33,7 @@ func (s *Store) ListIncidents(ctx context.Context, limit int, targetType string)
 	}
 	defer rows.Close()
 
-	var incidents []model.Incident
+	incidents := make([]model.Incident, 0)
 	for rows.Next() {
 		var inc model.Incident
 		if err := rows.Scan(&inc.ID, &inc.TargetType, &inc.TargetID, &inc.Title, &inc.Status, &inc.Severity,
@@ -115,7 +115,7 @@ func (s *Store) ListIncidentUpdates(ctx context.Context, incidentID uuid.UUID) (
 	}
 	defer rows.Close()
 
-	var updates []model.IncidentUpdate
+	updates := make([]model.IncidentUpdate, 0)
 	for rows.Next() {
 		var u model.IncidentUpdate
 		if err := rows.Scan(&u.ID, &u.IncidentID, &u.Status, &u.Message, &u.Author, &u.CreatedAt); err != nil {

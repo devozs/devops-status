@@ -19,7 +19,7 @@ func (s *Store) ListDataSources(ctx context.Context) ([]model.DataSource, error)
 	}
 	defer rows.Close()
 
-	var sources []model.DataSource
+	sources := make([]model.DataSource, 0)
 	for rows.Next() {
 		var ds model.DataSource
 		var cfgBytes []byte

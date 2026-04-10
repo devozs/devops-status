@@ -16,14 +16,19 @@
         </div>
         <div class="form-group">
           <label for="password" class="form-label">Password</label>
-          <input
-            id="password"
-            v-model="password"
-            type="password"
-            class="form-input"
-            placeholder="Enter password"
-            required
-          />
+          <div class="password-wrapper">
+            <input
+              id="password"
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              class="form-input"
+              placeholder="Enter password"
+              required
+            />
+            <button type="button" class="password-toggle" @click="showPassword = !showPassword">
+              {{ showPassword ? 'Hide' : 'Show' }}
+            </button>
+          </div>
         </div>
         <p v-if="error" class="form-error">{{ error }}</p>
         <button type="submit" class="login-button" :disabled="loading">
@@ -44,6 +49,7 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const showPassword = ref(false)
 
 async function handleLogin() {
   error.value = ''
@@ -116,6 +122,34 @@ async function handleLogin() {
 
 .form-input:focus {
   border-color: #3b82f6;
+}
+
+.password-wrapper {
+  position: relative;
+  display: flex;
+}
+
+.password-wrapper .form-input {
+  flex: 1;
+  padding-right: 60px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.password-toggle:hover {
+  color: var(--color-text);
 }
 
 .form-error {

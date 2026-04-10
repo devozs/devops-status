@@ -1,0 +1,37 @@
+# Local development stack: PostgreSQL + public HTTPS tunnel to the API on the host.
+# Run from repo root: make db-up | make tunnel-up | make dev-infra-up
+#
+# The tunnel forwards to host port 8080 (Go backend on your machine). Set EXTERNAL_URL
+# to the printed https://*.trycloudflare.com URL (see: make tunnel-url or tunnel/sync-external-url.sh).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: devops-status-db
+    environment:
+      POSTGRES_DB: devops_status
+      POSTGRES_USER: devops
+      POSTGRES_PASSWORD: devops_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devops -d devops_status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: devops-status-tunnel
+    command: tunnel --no-autoupdate --url http://host.docker.internal:${TUNNEL_TARGET_PORT:-8080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  # Pre-existing named volume (same data as old devops-status-dev-db project). Created on first make db-up if missing.
+  pg_data:
+    external: true
+    name: devops-status-dev-db_pg_data

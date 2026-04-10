@@ -34,7 +34,7 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("initializing store: %w", err)
 	}
 
-	sm := auth.NewSessionManager(cfg.SessionKey)
+	sm := auth.NewSessionManager(cfg.SessionKey, cfg.IsProd())
 
 	adapter.Register(adapter.NewHTTPAdapter())
 	adapter.Register(adapter.NewPrometheusAdapter())
@@ -43,7 +43,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	incidentMgr := engine.NewIncidentManager(db)
 	statusEval := engine.NewStatusEvaluator(db, incidentMgr)
-	sched := scheduler.New(db, statusEval, incidentMgr, 5)
+	sched := scheduler.New(db, statusEval, incidentMgr, 5, cfg.K8SInsecureSkipTLS)
 
 	s := &Server{
 		cfg:       cfg,

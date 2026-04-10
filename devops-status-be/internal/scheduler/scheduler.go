@@ -33,31 +33,33 @@ type bindingKey struct {
 }
 
 type Scheduler struct {
-	store       *store.Store
-	evaluator   *engine.StatusEvaluator
-	incidents   *engine.IncidentManager
-	workerCount int
-	jobs        chan ProbeJob
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
-	ticker      *time.Ticker
+	store          *store.Store
+	evaluator      *engine.StatusEvaluator
+	incidents      *engine.IncidentManager
+	workerCount    int
+	k8sInsecureTLS bool
+	jobs           chan ProbeJob
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
+	ticker         *time.Ticker
 
 	mu        sync.Mutex
 	lastProbe map[bindingKey]time.Time
 }
 
-func New(s *store.Store, eval *engine.StatusEvaluator, inc *engine.IncidentManager, workers int) *Scheduler {
+func New(s *store.Store, eval *engine.StatusEvaluator, inc *engine.IncidentManager, workers int, k8sInsecureTLS bool) *Scheduler {
 	if workers <= 0 {
 		workers = 5
 	}
 	return &Scheduler{
-		store:       s,
-		evaluator:   eval,
-		incidents:   inc,
-		workerCount: workers,
-		jobs:        make(chan ProbeJob, 200),
-		stopCh:      make(chan struct{}),
-		lastProbe:   make(map[bindingKey]time.Time),
+		store:          s,
+		evaluator:      eval,
+		incidents:      inc,
+		workerCount:    workers,
+		k8sInsecureTLS: k8sInsecureTLS,
+		jobs:           make(chan ProbeJob, 200),
+		stopCh:         make(chan struct{}),
+		lastProbe:      make(map[bindingKey]time.Time),
 	}
 }
 
@@ -212,10 +214,16 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		return
 	}
 
+	cfgJSON, err := sc.store.MergeKubernetesProbeConfig(ctx, job.Adapter, job.ConfigJSON, sc.k8sInsecureTLS)
+	if err != nil {
+		slog.Error("merge k8s credentials", "error", err)
+		return
+	}
+
 	probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	result, err := a.Probe(probeCtx, job.ConfigJSON)
+	result, err := a.Probe(probeCtx, cfgJSON)
 	if err != nil {
 		slog.Error("probe execution error", "adapter", job.Adapter, "target", job.TargetID, "error", err)
 		result = &adapter.ProbeResult{

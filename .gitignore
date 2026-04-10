@@ -4,4 +4,5 @@ devops-status-fe/.output
 devops-status-fe/dist
 devops-status-be/bin/
 .env
+.env.dev.local
 *.env.local

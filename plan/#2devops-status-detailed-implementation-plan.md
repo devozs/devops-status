@@ -118,7 +118,7 @@
   - Nuxt 4 application (public pages + admin UI).
 - `devops-status-be/`
   - Go backend service (APIs, scheduler, probe adapters, notifications).
-- `devops-status-dev-db/`
+- `devops-status-dev/` (Docker Compose: PostgreSQL + dev tunnel; `db/` holds migrations and seeds)
   - Development database assets:
     - SQL migrations
     - seed scripts
@@ -139,8 +139,8 @@
   - DB-only docker-compose (or equivalent single-container run) is allowed.
   - FE and BE should run directly on the host during development.
 - Keep persistence workflow consistent:
-  - run migrations from `devops-status-dev-db/`
-  - run seeds from `devops-status-dev-db/`
+  - run migrations from `devops-status-dev/db/migrations/`
+  - run seeds from `devops-status-dev/db/seeds/`
   - keep local Postgres data persisted between restarts
 
 ## System Overview
@@ -290,7 +290,7 @@ flowchart LR
 
 ## Phase 0 - Foundations + Admin Access
 
-- Project bootstrap with root folders: `devops-status-fe`, `devops-status-be`, `devops-status-dev-db`.
+- Project bootstrap with root folders: `devops-status-fe`, `devops-status-be`, `devops-status-dev` (includes `db/`, `tunnel/`, and `docker-compose.yml`).
 - PostgreSQL schema baseline.
 - Public page scaffold.
 - Admin area scaffold.

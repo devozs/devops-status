@@ -3,13 +3,17 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Config struct {
-	Port        string
-	DatabaseURL string
-	SessionKey  string
-	Environment string
+	Port               string
+	DatabaseURL        string
+	SessionKey         string
+	Environment        string
+	ExternalURL        string
+	FrontendURL        string
+	K8SInsecureSkipTLS bool
 }
 
 func Load() *Config {
@@ -18,7 +22,14 @@ func Load() *Config {
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://devops:devops_local@localhost:5432/devops_status?sslmode=disable"),
 		SessionKey:  getEnv("SESSION_KEY", "devops-status-dev-session-key-change-in-prod"),
 		Environment: getEnv("ENVIRONMENT", "development"),
+		ExternalURL: getEnv("EXTERNAL_URL", "http://localhost:8080"),
+		FrontendURL: getEnv("FRONTEND_URL", "http://localhost:3000"),
+		K8SInsecureSkipTLS: envBool("K8S_INSECURE_SKIP_TLS_VERIFY", false),
 	}
+}
+
+func (c *Config) IsProd() bool {
+	return c.Environment == "production"
 }
 
 func (c *Config) Addr() string {
@@ -34,4 +45,12 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string, defaultVal bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return defaultVal
+	}
+	return v == "1" || v == "true" || v == "yes"
 }

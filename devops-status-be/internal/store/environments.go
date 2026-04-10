@@ -22,7 +22,7 @@ func (s *Store) ListEnvironments(ctx context.Context, publicOnly bool) ([]model.
 	}
 	defer rows.Close()
 
-	var envs []model.Environment
+	envs := make([]model.Environment, 0)
 	for rows.Next() {
 		var env model.Environment
 		if err := rows.Scan(&env.ID, &env.Name, &env.Slug, &env.Description, &env.EnvType, &env.IsPublic, &env.Criticality, &env.CreatedAt, &env.UpdatedAt); err != nil {
@@ -121,7 +121,7 @@ func (s *Store) ListEnvironmentMembers(ctx context.Context, envID uuid.UUID) ([]
 	}
 	defer rows.Close()
 
-	var services []model.Service
+	services := make([]model.Service, 0)
 	for rows.Next() {
 		var svc model.Service
 		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Slug, &svc.Description, &svc.IsPublic, &svc.Criticality, &svc.CreatedAt, &svc.UpdatedAt); err != nil {

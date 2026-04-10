@@ -1,8 +1,16 @@
+<script setup lang="ts">
+const { backendStatus, startPolling } = useBackendHealth()
+onMounted(() => startPolling())
+</script>
+
 <template>
   <div class="layout">
     <header class="site-header">
       <div class="container header-inner">
-        <NuxtLink to="/" class="logo">DevOps Status</NuxtLink>
+        <div class="logo-group">
+          <NuxtLink to="/" class="logo">DevOps Status</NuxtLink>
+          <BackendIndicator />
+        </div>
         <nav class="header-nav">
           <NuxtLink to="/" class="nav-link">Status</NuxtLink>
           <NuxtLink to="/history" class="nav-link">History</NuxtLink>
@@ -41,6 +49,12 @@
   align-items: center;
   justify-content: space-between;
   height: 60px;
+}
+
+.logo-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .logo {

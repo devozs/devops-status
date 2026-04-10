@@ -24,7 +24,7 @@ type SessionManager struct {
 	store sessions.Store
 }
 
-func NewSessionManager(secretKey string) *SessionManager {
+func NewSessionManager(secretKey string, secureCookie bool) *SessionManager {
 	keyBytes := []byte(secretKey)
 	if len(keyBytes) < 32 {
 		keyBytes = securecookie.GenerateRandomKey(32)
@@ -35,7 +35,7 @@ func NewSessionManager(secretKey string) *SessionManager {
 		MaxAge:   86400 * 7,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false, // set true in production behind TLS
+		Secure:   secureCookie,
 	}
 	return &SessionManager{store: cookieStore}
 }

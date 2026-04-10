@@ -8,15 +8,16 @@ import (
 
 	"github.com/devops-status/be/internal/adapter"
 	"github.com/devops-status/be/internal/handler"
+	"github.com/devops-status/be/internal/store"
 )
 
-// ensure context is used
-var _ context.Context
+type ProbeTestHandler struct {
+	store          *store.Store
+	k8sInsecureTLS bool
+}
 
-type ProbeTestHandler struct{}
-
-func NewProbeTestHandler() *ProbeTestHandler {
-	return &ProbeTestHandler{}
+func NewProbeTestHandler(s *store.Store, k8sInsecureTLS bool) *ProbeTestHandler {
+	return &ProbeTestHandler{store: s, k8sInsecureTLS: k8sInsecureTLS}
 }
 
 type probeTestRequest struct {
@@ -37,7 +38,16 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfgBytes, _ := json.Marshal(req.ConfigJSON)
+	cfgBytes, err := json.Marshal(req.ConfigJSON)
+	if err != nil {
+		handler.WriteError(w, http.StatusBadRequest, "invalid config_json")
+		return
+	}
+	cfgBytes, err = h.store.MergeKubernetesProbeConfig(r.Context(), req.Adapter, cfgBytes, h.k8sInsecureTLS)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to merge k8s config")
+		return
+	}
 
 	ctx := r.Context()
 	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

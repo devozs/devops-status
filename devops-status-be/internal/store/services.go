@@ -22,7 +22,7 @@ func (s *Store) ListServices(ctx context.Context, publicOnly bool) ([]model.Serv
 	}
 	defer rows.Close()
 
-	var services []model.Service
+	services := make([]model.Service, 0)
 	for rows.Next() {
 		var svc model.Service
 		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Slug, &svc.Description, &svc.IsPublic, &svc.Criticality, &svc.CreatedAt, &svc.UpdatedAt); err != nil {

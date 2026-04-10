@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type K8sAPICapability struct {
@@ -133,7 +135,11 @@ func (s *Store) RotateClusterCredential(ctx context.Context, clusterID uuid.UUID
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO k8s_cluster_credentials (cluster_id, credential_type, secret_ref, is_active) VALUES ($1, $2, $3, true)`,
 		clusterID, credType, secretRef)
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.ClearK8sClusterAPIVerify(ctx, clusterID)
+	return nil
 }
 
 func (s *Store) GetActiveClusterCredential(ctx context.Context, clusterID uuid.UUID) (string, string, error) {
@@ -145,6 +151,28 @@ func (s *Store) GetActiveClusterCredential(ctx context.Context, clusterID uuid.U
 		return "", "", err
 	}
 	return credType, secretRef, nil
+}
+
+func (s *Store) RevokeClusterCredentials(ctx context.Context, clusterID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE k8s_cluster_credentials SET is_active=false, revoked_at=now() WHERE cluster_id=$1 AND is_active=true`,
+		clusterID)
+	if err != nil {
+		return err
+	}
+	_ = s.ClearK8sClusterAPIVerify(ctx, clusterID)
+	return nil
+}
+
+func (s *Store) HasActiveClusterCredential(ctx context.Context, clusterID uuid.UUID) (bool, error) {
+	_, _, err := s.GetActiveClusterCredential(ctx, clusterID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) GetStaleHandshakeClusters(ctx context.Context, maxAge time.Duration) ([]uuid.UUID, error) {

@@ -4,7 +4,7 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      apiBase: 'http://localhost:8080',
+      apiBase: '',
     },
   },
 
@@ -12,7 +12,7 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      title: 'DevOps Status',
+      title: 'DOS — DevOpsStatus',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
@@ -20,6 +20,7 @@ export default defineNuxtConfig({
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
       ],
     },
   },

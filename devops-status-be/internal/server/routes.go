@@ -20,7 +20,7 @@ func (s *Server) routes() http.Handler {
 	r.Use(middleware.RequestLogger)
 	r.Use(chimw.Recoverer)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000"},
+		AllowedOrigins:   []string{s.cfg.FrontendURL},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Content-Type", "X-CSRF-Token"},
 		AllowCredentials: true,
@@ -61,7 +61,7 @@ func (s *Server) routes() http.Handler {
 	})
 
 	// K8s agent registration callback (no admin session required; token-based)
-	k8sH := adminhandler.NewK8sClustersHandler(s.store)
+	k8sH := adminhandler.NewK8sClustersHandler(s.store, s.cfg.ExternalURL, s.cfg.IsDev(), s.cfg.K8SInsecureSkipTLS)
 	r.Post("/api/admin/k8s-clusters/{id}/register", k8sH.RegisterCallback)
 	r.Post("/api/admin/k8s-clusters/{id}/heartbeat", k8sH.Heartbeat)
 
@@ -80,6 +80,9 @@ func (s *Server) routes() http.Handler {
 
 		r.Post("/auth/logout", authH.Logout)
 		r.Get("/auth/me", authH.Me)
+
+		metaH := adminhandler.NewMetaHandler(s.cfg.ExternalURL, s.cfg.IsDev())
+		r.Get("/meta", metaH.Get)
 
 		// Services CRUD
 		svcH := adminhandler.NewServicesHandler(s.store)
@@ -125,14 +128,17 @@ func (s *Server) routes() http.Handler {
 			r.Delete("/environments/{id}", bindH.DeleteEnvironmentBinding)
 		})
 
-		// K8s Clusters
+		// K8s Clusters — register /{id}/… routes before /{id} so chi never treats a suffix as an {id} value.
 		r.Route("/k8s-clusters", func(r chi.Router) {
 			r.Get("/", k8sH.List)
 			r.Post("/", k8sH.Create)
+			r.Post("/{id}/onboard", k8sH.GenerateOnboardingToken)
+			r.Post("/{id}/api-token", k8sH.SetClusterAPIToken)
+			r.Get("/{id}/verify", k8sH.VerifyConnectivity)
+			r.Post("/{id}/verify", k8sH.VerifyConnectivity)
+			r.Post("/{id}/revoke", k8sH.Revoke)
 			r.Get("/{id}", k8sH.Get)
 			r.Delete("/{id}", k8sH.Delete)
-			r.Post("/{id}/onboard", k8sH.GenerateOnboardingToken)
-			r.Post("/{id}/revoke", k8sH.Revoke)
 		})
 
 		// Incidents
@@ -144,7 +150,7 @@ func (s *Server) routes() http.Handler {
 		})
 
 		// Probe Test
-		probeTestH := adminhandler.NewProbeTestHandler()
+		probeTestH := adminhandler.NewProbeTestHandler(s.store, s.cfg.K8SInsecureSkipTLS)
 		r.Post("/probes/test", probeTestH.Test)
 	})
 

@@ -25,7 +25,7 @@ func (s *Store) ListServiceProbeBindings(ctx context.Context, serviceID *uuid.UU
 	}
 	defer rows.Close()
 
-	var bindings []model.ServiceProbeBinding
+	bindings := make([]model.ServiceProbeBinding, 0)
 	for rows.Next() {
 		var b model.ServiceProbeBinding
 		if err := rows.Scan(&b.ID, &b.ServiceID, &b.ProbeKind, &b.DataSourceID, &b.SampleIntervalSec,
@@ -54,7 +54,7 @@ func (s *Store) ListEnvironmentProbeBindings(ctx context.Context, envID *uuid.UU
 	}
 	defer rows.Close()
 
-	var bindings []model.EnvironmentProbeBinding
+	bindings := make([]model.EnvironmentProbeBinding, 0)
 	for rows.Next() {
 		var b model.EnvironmentProbeBinding
 		if err := rows.Scan(&b.ID, &b.EnvironmentID, &b.ProbeKind, &b.DataSourceID, &b.SampleIntervalSec,

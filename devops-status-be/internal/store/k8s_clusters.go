@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,6 +25,9 @@ type K8sCluster struct {
 	K8sVersion         string     `json:"k8s_version"`
 	Status             string     `json:"status"`
 	LastCapabilityScan *time.Time `json:"last_capability_scan,omitempty"`
+	APIVerifyOk        *bool      `json:"api_verify_ok"`
+	APIVerifyCheckedAt *time.Time `json:"api_verify_checked_at,omitempty"`
+	APIVerifyDetail    string     `json:"api_verify_detail,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -37,19 +42,36 @@ type CreateK8sClusterInput struct {
 
 func (s *Store) ListK8sClusters(ctx context.Context) ([]K8sCluster, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan, created_at, updated_at
+		`SELECT id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan,
+			api_verify_ok, api_verify_checked_at, api_verify_detail, created_at, updated_at
 		 FROM k8s_clusters ORDER BY name ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list k8s clusters: %w", err)
 	}
 	defer rows.Close()
 
-	var clusters []K8sCluster
+	clusters := make([]K8sCluster, 0)
 	for rows.Next() {
 		var c K8sCluster
+		var apiOk sql.NullBool
+		var apiAt sql.NullTime
+		var apiDetail sql.NullString
 		if err := rows.Scan(&c.ID, &c.Name, &c.EnvironmentID, &c.Endpoint, &c.AuthMethod, &c.DefaultNamespace,
-			&c.K8sVersion, &c.Status, &c.LastCapabilityScan, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.K8sVersion, &c.Status, &c.LastCapabilityScan,
+			&apiOk, &apiAt, &apiDetail,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan k8s cluster: %w", err)
+		}
+		if apiOk.Valid {
+			v := apiOk.Bool
+			c.APIVerifyOk = &v
+		}
+		if apiAt.Valid {
+			t := apiAt.Time
+			c.APIVerifyCheckedAt = &t
+		}
+		if apiDetail.Valid {
+			c.APIVerifyDetail = apiDetail.String
 		}
 		clusters = append(clusters, c)
 	}
@@ -58,28 +80,62 @@ func (s *Store) ListK8sClusters(ctx context.Context) ([]K8sCluster, error) {
 
 func (s *Store) GetK8sClusterByID(ctx context.Context, id uuid.UUID) (*K8sCluster, error) {
 	var c K8sCluster
+	var apiOk sql.NullBool
+	var apiAt sql.NullTime
+	var apiDetail sql.NullString
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan, created_at, updated_at
+		`SELECT id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan,
+			api_verify_ok, api_verify_checked_at, api_verify_detail, created_at, updated_at
 		 FROM k8s_clusters WHERE id=$1`, id).
 		Scan(&c.ID, &c.Name, &c.EnvironmentID, &c.Endpoint, &c.AuthMethod, &c.DefaultNamespace,
-			&c.K8sVersion, &c.Status, &c.LastCapabilityScan, &c.CreatedAt, &c.UpdatedAt)
+			&c.K8sVersion, &c.Status, &c.LastCapabilityScan,
+			&apiOk, &apiAt, &apiDetail,
+			&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get k8s cluster: %w", err)
+	}
+	if apiOk.Valid {
+		v := apiOk.Bool
+		c.APIVerifyOk = &v
+	}
+	if apiAt.Valid {
+		t := apiAt.Time
+		c.APIVerifyCheckedAt = &t
+	}
+	if apiDetail.Valid {
+		c.APIVerifyDetail = apiDetail.String
 	}
 	return &c, nil
 }
 
 func (s *Store) CreateK8sCluster(ctx context.Context, input CreateK8sClusterInput) (*K8sCluster, error) {
 	var c K8sCluster
+	var apiOk sql.NullBool
+	var apiAt sql.NullTime
+	var apiDetail sql.NullString
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO k8s_clusters (name, environment_id, endpoint, auth_method, default_namespace)
 		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan, created_at, updated_at`,
+		 RETURNING id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan,
+			api_verify_ok, api_verify_checked_at, api_verify_detail, created_at, updated_at`,
 		input.Name, input.EnvironmentID, input.Endpoint, input.AuthMethod, input.DefaultNamespace).
 		Scan(&c.ID, &c.Name, &c.EnvironmentID, &c.Endpoint, &c.AuthMethod, &c.DefaultNamespace,
-			&c.K8sVersion, &c.Status, &c.LastCapabilityScan, &c.CreatedAt, &c.UpdatedAt)
+			&c.K8sVersion, &c.Status, &c.LastCapabilityScan,
+			&apiOk, &apiAt, &apiDetail,
+			&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create k8s cluster: %w", err)
+	}
+	if apiOk.Valid {
+		v := apiOk.Bool
+		c.APIVerifyOk = &v
+	}
+	if apiAt.Valid {
+		t := apiAt.Time
+		c.APIVerifyCheckedAt = &t
+	}
+	if apiDetail.Valid {
+		c.APIVerifyDetail = apiDetail.String
 	}
 	return &c, nil
 }
@@ -98,6 +154,28 @@ func (s *Store) UpdateK8sClusterVersion(ctx context.Context, id uuid.UUID, versi
 
 func (s *Store) DeleteK8sCluster(ctx context.Context, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM k8s_clusters WHERE id = $1`, id)
+	return err
+}
+
+const maxAPIVerifyDetailLen = 2000
+
+// UpdateK8sClusterAPIVerify persists the outcome of GET /version from the app server to the cluster API.
+func (s *Store) UpdateK8sClusterAPIVerify(ctx context.Context, clusterID uuid.UUID, ok bool, detail string) error {
+	detail = strings.TrimSpace(detail)
+	if len(detail) > maxAPIVerifyDetailLen {
+		detail = detail[:maxAPIVerifyDetailLen]
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE k8s_clusters SET api_verify_ok=$2, api_verify_checked_at=now(), api_verify_detail=$3, updated_at=now() WHERE id=$1`,
+		clusterID, ok, detail)
+	return err
+}
+
+// ClearK8sClusterAPIVerify resets stored API check state (e.g. after rotating the cluster token).
+func (s *Store) ClearK8sClusterAPIVerify(ctx context.Context, clusterID uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE k8s_clusters SET api_verify_ok=NULL, api_verify_checked_at=NULL, api_verify_detail=NULL, updated_at=now() WHERE id=$1`,
+		clusterID)
 	return err
 }
 
