@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -70,16 +71,52 @@ type Telemetry struct {
 }
 
 type Incident struct {
-	ID         uuid.UUID  `json:"id"`
-	TargetType string     `json:"target_type"`
-	TargetID   uuid.UUID  `json:"target_id"`
-	Title      string     `json:"title"`
-	Status     string     `json:"status"`
-	Severity   string     `json:"severity"`
-	StartedAt  time.Time  `json:"started_at"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID                uuid.UUID       `json:"id"`
+	TargetType        string          `json:"target_type"`
+	TargetID          uuid.UUID       `json:"target_id"`
+	Title             string          `json:"title"`
+	Status            string          `json:"status"`
+	Severity          string          `json:"severity"`
+	StartedAt         time.Time       `json:"started_at"`
+	ResolvedAt        *time.Time      `json:"resolved_at,omitempty"`
+	SourceTelemetryID *uuid.UUID      `json:"source_telemetry_id,omitempty"`
+	Degradation       json.RawMessage `json:"degradation,omitempty"`
+	ResolvedBy        *string         `json:"resolved_by,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+// AdminIncidentListItem is the admin incidents table row with resolved target and infra context.
+type AdminIncidentListItem struct {
+	Incident
+	TargetName      string                 `json:"target_name"`
+	TargetSlug      string                 `json:"target_slug"`
+	Infra           *AdminIncidentInfra    `json:"infra,omitempty"`
+	LinkedTelemetry []AdminLinkedTelemetry `json:"linked_telemetry"`
+	Resolution      string                 `json:"resolution"` // open | automatic | manual | unknown
+}
+
+type AdminIncidentInfra struct {
+	ServiceProvider *AdminInfraServiceProvider `json:"service_provider,omitempty"`
+	K8sCluster      *AdminInfraK8sCluster      `json:"k8s_cluster,omitempty"`
+}
+
+type AdminInfraServiceProvider struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	ProviderType string    `json:"provider_type"`
+}
+
+type AdminInfraK8sCluster struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+type AdminLinkedTelemetry struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	Adapter     string    `json:"adapter"`
 }
 
 type IncidentUpdate struct {
