@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,15 +16,19 @@ import (
 	"github.com/devops-status/be/internal/config"
 	"github.com/devops-status/be/internal/engine"
 	"github.com/devops-status/be/internal/scheduler"
+	"github.com/devops-status/be/internal/secrets"
 	"github.com/devops-status/be/internal/store"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type Server struct {
-	cfg       *config.Config
-	store     *store.Store
-	session   *auth.SessionManager
-	scheduler *scheduler.Scheduler
-	http      *http.Server
+	cfg        *config.Config
+	store      *store.Store
+	secret     *secrets.Store
+	session    *auth.SessionManager
+	scheduler  *scheduler.Scheduler
+	http       *http.Server
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -34,22 +39,114 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("initializing store: %w", err)
 	}
 
+	sec, err := secrets.NewStore(db.Pool(), cfg.SecretEncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("secrets store: %w", err)
+	}
+
 	sm := auth.NewSessionManager(cfg.SessionKey, cfg.IsProd())
+
+	logMax := cfg.CLILogMaxBytes
+	if logMax <= 0 {
+		logMax = adapter.DefaultCLILogMaxBytes
+	}
+	imgs := adapter.CLIRunnerImages{
+		Alpine:   cfg.CLIRunnerImageAlpine,
+		Ubuntu24: cfg.CLIRunnerImageUbuntu,
+		Legacy:   cfg.CLIRunnerImage,
+	}
+
+	var backendRun adapter.BackendCLIRunner
+	switch cfg.CLIBackendExecutor {
+	case "k8s":
+		cidStr := cfg.CLIBackendK8sCluster
+		if cidStr == "" {
+			backendRun = func(_ context.Context, _ string, _ adapter.CLIConfig) (*adapter.ProbeResult, error) {
+				return &adapter.ProbeResult{
+					Success:  false,
+					ProbedAt: time.Now(),
+					Error:    "CLI_BACKEND_EXECUTOR=k8s requires CLI_BACKEND_K8S_CLUSTER_ID",
+				}, nil
+			}
+		} else {
+			clusterUUID, perr := uuid.Parse(cidStr)
+			if perr != nil {
+				backendRun = func(_ context.Context, _ string, _ adapter.CLIConfig) (*adapter.ProbeResult, error) {
+					return &adapter.ProbeResult{
+						Success:  false,
+						ProbedAt: time.Now(),
+						Error:    "invalid CLI_BACKEND_K8S_CLUSTER_ID",
+					}, nil
+				}
+			} else {
+				backendRun = func(c context.Context, image string, cliCfg adapter.CLIConfig) (*adapter.ProbeResult, error) {
+					_, token, terr := db.GetActiveClusterCredential(c, clusterUUID)
+					if terr != nil {
+						if errors.Is(terr, pgx.ErrNoRows) {
+							return &adapter.ProbeResult{
+								Success:  false,
+								ProbedAt: time.Now(),
+								Error:    "backend k8s cluster has no active API credential",
+							}, nil
+						}
+						return &adapter.ProbeResult{
+							Success:  false,
+							ProbedAt: time.Now(),
+							Error:    fmt.Sprintf("load cluster credential: %v", terr),
+						}, nil
+					}
+					if token == "" {
+						return &adapter.ProbeResult{
+							Success:  false,
+							ProbedAt: time.Now(),
+							Error:    "backend k8s cluster token is empty",
+						}, nil
+					}
+					cl, cerr := db.GetK8sClusterByID(c, clusterUUID)
+					if cerr != nil {
+						return &adapter.ProbeResult{
+							Success:  false,
+							ProbedAt: time.Now(),
+							Error:    fmt.Sprintf("load cluster: %v", cerr),
+						}, nil
+					}
+					if cl.Endpoint == "" {
+						return &adapter.ProbeResult{
+							Success:  false,
+							ProbedAt: time.Now(),
+							Error:    "backend k8s cluster has no endpoint",
+						}, nil
+					}
+					return adapter.RunCLIAsK8sJob(c, cl.Endpoint, token, cfg.K8SInsecureSkipTLS, image, cliCfg, logMax)
+				}
+			}
+		}
+	default:
+		dockerOpts := adapter.DockerRunOpts{Network: cfg.CLIDockerNetwork}
+		backendRun = func(c context.Context, image string, cliCfg adapter.CLIConfig) (*adapter.ProbeResult, error) {
+			return adapter.RunCLIAsDocker(c, image, cliCfg, dockerOpts, logMax)
+		}
+	}
+
+	k8sRun := func(c context.Context, endpoint, token string, insecure bool, image string, cliCfg adapter.CLIConfig) (*adapter.ProbeResult, error) {
+		return adapter.RunCLIAsK8sJob(c, endpoint, token, insecure, image, cliCfg, logMax)
+	}
 
 	adapter.Register(adapter.NewHTTPAdapter())
 	adapter.Register(adapter.NewPrometheusAdapter())
 	adapter.Register(adapter.NewKubernetesAdapter())
-	adapter.Register(adapter.NewCLIAdapter([]string{"curl", "kubectl", "go"}))
+	adapter.Register(adapter.NewCLIAdapter([]string{"curl", "kubectl", "go", "echo"}, imgs, logMax, backendRun, k8sRun))
 
 	incidentMgr := engine.NewIncidentManager(db)
 	statusEval := engine.NewStatusEvaluator(db, incidentMgr)
-	sched := scheduler.New(db, statusEval, incidentMgr, 5, cfg.K8SInsecureSkipTLS)
+	sched := scheduler.New(db, sec, statusEval, incidentMgr, 5, cfg.K8SInsecureSkipTLS)
 
 	s := &Server{
-		cfg:       cfg,
-		store:     db,
-		session:   sm,
-		scheduler: sched,
+		cfg:        cfg,
+		store:      db,
+		secret:     sec,
+		session:    sm,
+		scheduler:  sched,
 	}
 
 	router := s.routes()

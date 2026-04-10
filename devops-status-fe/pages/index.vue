@@ -10,14 +10,25 @@
     <section v-if="statusData.environments?.length" class="status-section">
       <h2 class="section-title">Environments</h2>
       <div class="card-list">
-        <ServiceCard v-for="env in statusData.environments" :key="env.slug" :item="env" />
+        <EnvironmentStatusCard
+          v-for="env in statusData.environments"
+          :key="env.slug"
+          :item="env"
+          :slug="env.slug"
+        />
       </div>
     </section>
 
     <section v-if="statusData.services?.length" class="status-section">
       <h2 class="section-title">Services</h2>
       <div class="card-list">
-        <ServiceCard v-for="svc in statusData.services" :key="svc.slug" :item="svc" />
+        <EnvironmentStatusCard
+          v-for="svc in statusData.services"
+          :key="svc.slug"
+          resource="service"
+          :item="svc"
+          :slug="svc.slug"
+        />
       </div>
     </section>
 
@@ -64,12 +75,13 @@ function formatDate(iso: string) {
 <style scoped>
 .home-page { padding-top: 16px; }
 .section-header { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 24px; font-size: 0.85rem; color: var(--color-text-secondary); }
-.section-link { font-weight: 500; text-decoration: underline; }
+.section-link { font-weight: 500; color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+.section-link:hover { color: var(--color-primary-hover); }
 .status-section { margin-bottom: 40px; }
 .section-title { font-size: 1.15rem; font-weight: 600; margin-bottom: 16px; }
 .card-list { display: flex; flex-direction: column; gap: 12px; }
 .incident-list { display: flex; flex-direction: column; gap: 12px; }
-.incident-item { border-left: 3px solid var(--color-orange); padding: 12px 16px; background: var(--color-bg-secondary); border-radius: 0 var(--radius) var(--radius) 0; }
+.incident-item { border-left: 3px solid var(--color-orange); padding: 12px 16px; background: var(--color-bg); border: 1px solid var(--color-border-strong); border-radius: 0 var(--radius) var(--radius) 0; box-shadow: var(--shadow-card); }
 .incident-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .incident-title { font-weight: 600; font-size: 0.9rem; }
 .severity--major { color: var(--color-red); }

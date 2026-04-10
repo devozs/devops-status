@@ -1,5 +1,5 @@
 <template>
-  <div class="service-card">
+  <div class="service-card" :class="{ 'service-card--nested': variant === 'nested' }">
     <div class="card-header">
       <span class="card-name">{{ item.name }}</span>
       <span class="card-status" :class="'status--' + item.status">{{ statusLabel }}</span>
@@ -37,7 +37,11 @@ interface StatusItem {
   days?: DayData[]
 }
 
-const props = defineProps<{ item: StatusItem }>()
+const props = defineProps<{
+  item: StatusItem
+  /** Smaller padding for nested / per-telemetry rows */
+  variant?: 'default' | 'nested'
+}>()
 
 const statusLabel = computed(() => {
   if (props.item.status === 'disruption') return 'Disruption'
@@ -68,10 +72,19 @@ const timelineDays = computed(() => {
 
 <style scoped>
 .service-card {
-  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   padding: 16px 20px;
+  box-shadow: var(--shadow-card);
 }
+.service-card--nested {
+  padding: 12px 14px;
+  box-shadow: none;
+  border-color: var(--color-border);
+}
+.service-card--nested .card-bar { height: 22px; }
+.service-card--nested .card-name { font-size: 0.88rem; }
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -87,7 +100,7 @@ const timelineDays = computed(() => {
 .bar--green { background: var(--color-green); }
 .bar--yellow { background: var(--color-yellow); }
 .bar--red { background: var(--color-red); }
-.bar--empty { background: #e5e7eb; }
+.bar--empty { background: #e8eaef; }
 .card-footer { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--color-text-secondary); }
 .card-uptime { font-weight: 500; }
 </style>

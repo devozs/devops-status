@@ -250,3 +250,44 @@ func (s *Store) RevokeHandshake(ctx context.Context, clusterID uuid.UUID) error 
 		 WHERE cluster_id=$1 AND status IN ('pending','registered','connected')`, clusterID)
 	return err
 }
+
+// GetConnectedClusterForEnvironment returns the environment's primary connected cluster when set, else the newest connected cluster for the environment.
+func (s *Store) GetConnectedClusterForEnvironment(ctx context.Context, envID uuid.UUID) (*K8sCluster, error) {
+	var primaryID *uuid.UUID
+	_ = s.pool.QueryRow(ctx, `SELECT k8s_cluster_id FROM environments WHERE id = $1`, envID).Scan(&primaryID)
+	if primaryID != nil {
+		c, err := s.GetK8sClusterByID(ctx, *primaryID)
+		if err == nil && c.Status == "connected" && c.EnvironmentID != nil && *c.EnvironmentID == envID {
+			return c, nil
+		}
+	}
+
+	var c K8sCluster
+	var apiOk sql.NullBool
+	var apiAt sql.NullTime
+	var apiDetail sql.NullString
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, name, environment_id, endpoint, auth_method, default_namespace, k8s_version, status, last_capability_scan,
+			api_verify_ok, api_verify_checked_at, api_verify_detail, created_at, updated_at
+		 FROM k8s_clusters WHERE environment_id=$1 AND status='connected'
+		 ORDER BY updated_at DESC LIMIT 1`, envID).
+		Scan(&c.ID, &c.Name, &c.EnvironmentID, &c.Endpoint, &c.AuthMethod, &c.DefaultNamespace,
+			&c.K8sVersion, &c.Status, &c.LastCapabilityScan,
+			&apiOk, &apiAt, &apiDetail,
+			&c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if apiOk.Valid {
+		v := apiOk.Bool
+		c.APIVerifyOk = &v
+	}
+	if apiAt.Valid {
+		t := apiAt.Time
+		c.APIVerifyCheckedAt = &t
+	}
+	if apiDetail.Valid {
+		c.APIVerifyDetail = apiDetail.String
+	}
+	return &c, nil
+}

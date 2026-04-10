@@ -38,6 +38,7 @@ help:
 	@echo ""
 	@echo "Prod-like dev:"
 	@echo "  ./run.sh            Infra + be-run (bg) + fe-dev — safe full restart from repo root"
+	@echo "  ./run.sh --kill     Stop API/FE listeners + docker infra only (no start)"
 	@echo "  Or manually:"
 	@echo "  1) make dev-infra-up && make db-migrate && make db-seed"
 	@echo "  2) make be-run   (auto-detects tunnel URL)"
@@ -77,7 +78,10 @@ dev-cleanup-containers:
 # --- Database ---
 db-migrate:
 	@echo "Waiting for PostgreSQL to be ready..."
-	@until docker exec devops-status-db pg_isready -U devops -d devops_status > /dev/null 2>&1; do sleep 1; done
+	@n=0; until docker exec devops-status-db pg_isready -U devops -d devops_status > /dev/null 2>&1; do \
+		n=$$((n+1)); if [ "$$n" -ge 90 ]; then echo "error: Postgres not ready after 90s (is devops-status-db running?)"; exit 1; fi; \
+		sleep 0.33; \
+	done
 	@echo "Running migrations..."
 	@set -e; for f in $$(ls $(DB_DIR)/migrations/*.up.sql | sort); do \
 		echo "  $$f"; docker exec -i devops-status-db psql -U devops -d devops_status < "$$f"; \
@@ -114,10 +118,10 @@ be-run:
 	@TUNNEL_URL=""; \
 	if [ "$(ENVIRONMENT)" = "development" ]; then \
 		if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx devops-status-tunnel; then \
-			for i in $$(seq 1 30); do \
+			for i in $$(seq 1 40); do \
 				TUNNEL_URL=$$(docker logs devops-status-tunnel 2>&1 | grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -1 || true); \
 				[ -n "$$TUNNEL_URL" ] && break; \
-				sleep 1; \
+				sleep 0.25; \
 			done; \
 		fi; \
 		if [ -n "$$TUNNEL_URL" ]; then \
@@ -136,9 +140,9 @@ be-build:
 fe-install:
 	cd devops-status-fe && npm install
 
+# Uses bash + scripts/dev-node-env.sh so npm works under nvm/mise when make runs from an IDE.
 fe-dev:
-	lsof -t -i:3000 | xargs kill -9 2>/dev/null || true && clear
-	cd devops-status-fe && npm run dev
+	bash scripts/fe-dev.sh
 
 # --- Combined (informational) ---
 dev:

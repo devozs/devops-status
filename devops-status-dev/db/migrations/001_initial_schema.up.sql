@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS environment_service_membership (
     UNIQUE(environment_id, service_id)
 );
 
--- Data sources
-CREATE TABLE IF NOT EXISTS data_sources (
+-- Telemetry (reusable probe / adapter configs)
+CREATE TABLE IF NOT EXISTS telemetry (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name        VARCHAR(255) NOT NULL,
     ds_type     VARCHAR(20) NOT NULL CHECK (ds_type IN ('operational', 'qos')),
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS service_probe_bindings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     service_id      UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     probe_kind      VARCHAR(20) NOT NULL CHECK (probe_kind IN ('operational', 'qos')),
-    data_source_id  UUID NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    telemetry_id    UUID NOT NULL REFERENCES telemetry(id) ON DELETE CASCADE,
     sample_interval_sec INT NOT NULL DEFAULT 60,
     window_size     INT NOT NULL DEFAULT 5,
     consecutive_failures_to_down INT NOT NULL DEFAULT 3,
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS environment_probe_bindings (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     environment_id  UUID NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
     probe_kind      VARCHAR(20) NOT NULL CHECK (probe_kind IN ('operational', 'qos')),
-    data_source_id  UUID NOT NULL REFERENCES data_sources(id) ON DELETE CASCADE,
+    telemetry_id    UUID NOT NULL REFERENCES telemetry(id) ON DELETE CASCADE,
     sample_interval_sec INT NOT NULL DEFAULT 60,
     window_size     INT NOT NULL DEFAULT 5,
     consecutive_failures_to_down INT NOT NULL DEFAULT 3,

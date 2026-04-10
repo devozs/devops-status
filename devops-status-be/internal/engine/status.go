@@ -17,8 +17,8 @@ func NewStatusEvaluator(s *store.Store, inc *IncidentManager) *StatusEvaluator {
 	return &StatusEvaluator{store: s, incident: inc}
 }
 
-func (e *StatusEvaluator) Evaluate(ctx context.Context, targetType string, targetID uuid.UUID, probeKind string, windowSize, failuresDown, successUp int) {
-	samples, err := e.store.GetRecentSamples(ctx, targetType, targetID, probeKind, windowSize)
+func (e *StatusEvaluator) Evaluate(ctx context.Context, targetType string, targetID uuid.UUID, probeKind string, windowSize, failuresDown, successUp int, adapter string, qosThresholds []byte, telemetryID *uuid.UUID) {
+	samples, err := e.store.GetRecentSamplesForProbe(ctx, targetType, targetID, telemetryID, probeKind, windowSize)
 	if err != nil {
 		slog.Error("evaluate: fetch samples", "error", err)
 		return
@@ -32,7 +32,7 @@ func (e *StatusEvaluator) Evaluate(ctx context.Context, targetType string, targe
 	case "operational":
 		e.evaluateOperational(ctx, targetType, targetID, samples, failuresDown, successUp)
 	case "qos":
-		e.evaluateQoS(ctx, targetType, targetID, samples)
+		e.evaluateQoS(ctx, targetType, targetID, samples, adapter, qosThresholds)
 	}
 }
 
@@ -57,30 +57,14 @@ func (e *StatusEvaluator) evaluateOperational(ctx context.Context, targetType st
 	}
 }
 
-func (e *StatusEvaluator) evaluateQoS(ctx context.Context, targetType string, targetID uuid.UUID, samples []store.SampleRecord) {
+func (e *StatusEvaluator) evaluateQoS(ctx context.Context, targetType string, targetID uuid.UUID, samples []store.SampleRecord, adapter string, qosThresholds []byte) {
 	if len(samples) == 0 {
 		return
 	}
 
-	successCount := 0
-	for _, s := range samples {
-		if s.Success {
-			successCount++
-		}
-	}
+	level, passRate := e.evaluateQoSWithThresholds(samples, adapter, qosThresholds)
 
-	passRate := float64(successCount) / float64(len(samples)) * 100
-
-	var level string
-	if passRate >= 99 {
-		level = "green"
-	} else if passRate >= 95 {
-		level = "yellow"
-	} else {
-		level = "red"
-	}
-
-	slog.Debug("qos evaluation", "target_type", targetType, "target_id", targetID, "pass_rate", passRate, "level", level)
+	slog.Debug("qos evaluation", "target_type", targetType, "target_id", targetID, "pass_rate", passRate, "level", level, "adapter", adapter)
 
 	if level == "red" {
 		e.incident.OnDegraded(ctx, targetType, targetID, passRate)

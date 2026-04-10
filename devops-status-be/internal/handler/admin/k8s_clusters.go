@@ -130,7 +130,7 @@ func (h *K8sClustersHandler) GenerateOnboardingToken(w http.ResponseWriter, r *h
 	userID, _ := auth.UserIDFromContext(r.Context())
 	_ = h.store.CreateAuditLog(r.Context(), &userID, "generate_onboarding_token", "k8s_cluster", &id, nil, r.RemoteAddr)
 
-	command := "kubectl apply -f - <<'EOF'\n" + manifest + "EOF"
+	command := onboardingShellPreamble() + "kubectl apply -f - <<'EOF'\n" + manifest + "EOF"
 
 	instructions := buildOnboardingInstructions(h.externalURL, h.isDev)
 
@@ -270,7 +270,32 @@ func (h *K8sClustersHandler) VerifyConnectivity(w http.ResponseWriter, r *http.R
 	handler.WriteJSON(w, http.StatusOK, res)
 }
 
-func generateOnboardingManifest(clusterName, clusterID, token, externalURL string) string {
+// onboardingJobSuffix makes a unique, DNS-safe Job name suffix from the handshake token (immutable Job spec).
+func onboardingJobSuffix(token string) string {
+	if len(token) < 8 {
+		return "00000000"
+	}
+	return strings.ToLower(token[:8])
+}
+
+// normalizeExternalURLForOnboarding trims whitespace and trailing slashes so the Job does not build //api/... URLs.
+func normalizeExternalURLForOnboarding(raw string) string {
+	raw = strings.TrimSpace(raw)
+	return strings.TrimRight(raw, "/")
+}
+
+// onboardingShellPreamble removes the legacy fixed-name Job so re-onboarding works after a DB reset
+// when the cluster still has the old manifest applied.
+func onboardingShellPreamble() string {
+	return `# Remove legacy fixed-name Job if it still exists (e.g. DB reset while cluster resources remain).
+kubectl delete job devops-status-register -n devops-status-system --ignore-not-found
+
+`
+}
+
+func generateOnboardingManifest(_ string, clusterID, token, externalURL string) string {
+	jobName := "devops-status-register-" + onboardingJobSuffix(token)
+	baseURL := normalizeExternalURLForOnboarding(externalURL)
 	return `---
 apiVersion: v1
 kind: Namespace
@@ -314,8 +339,11 @@ roleRef:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: devops-status-register
+  name: ` + jobName + `
   namespace: devops-status-system
+  labels:
+    app.kubernetes.io/managed-by: devops-status
+    app.kubernetes.io/component: cluster-onboarding
 spec:
   template:
     spec:
@@ -326,17 +354,25 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
-              set -e
+              set -eu
               HSK='` + token + `'
               SA_TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
               B64=$(printf '%s' "$SA_TOKEN" | base64 | tr -d '\n')
-              curl -sS -f -X POST \
+              URL="${STATUS_API_URL}/api/admin/k8s-clusters/` + clusterID + `/register"
+              echo "devops-status: POST ${URL}" >&2
+              # -4: prefer IPv4 (exit 6 is often AAAA/IPv6 egress issues from pods)
+              curl -4 --connect-timeout 25 --max-time 120 -Ssf -X POST \
                 -H "Content-Type: application/json" \
                 -d "{\"token\":\"${HSK}\",\"cluster_bearer_token_b64\":\"${B64}\"}" \
-                "${STATUS_API_URL}/api/admin/k8s-clusters/` + clusterID + `/register"
+                "$URL" || {
+                  c=$?
+                  echo "devops-status: curl failed, exit ${c} (6=DNS, 7=connect, 22=HTTP 4xx/5xx, 28=timeout)" >&2
+                  exit "${c}"
+                }
+              echo "devops-status: register succeeded" >&2
           env:
             - name: STATUS_API_URL
-              value: "` + externalURL + `"
+              value: "` + baseURL + `"
       restartPolicy: Never
   backoffLimit: 3
 `
@@ -346,7 +382,10 @@ func buildOnboardingInstructions(externalURL string, isDev bool) []string {
 	if !isDev {
 		return []string{
 			"Copy the command below and run it on the target Kubernetes cluster.",
+			"It removes a legacy Job named devops-status-register if present (e.g. after resetting the status DB), then applies a new registration Job with a unique name for this handshake.",
 			"The Job posts the handshake token and the in-cluster service-account token back to the status API so probes can call the Kubernetes API.",
+			"The generated URL uses a DNS trailing dot on the hostname so pods treat it as an internet FQDN (not subject to cluster DNS search paths). If exit 6 persists, fix cluster/upstream DNS or egress; exit 7 is TCP blocked.",
+			"To remove old onboarding Jobs later: kubectl delete jobs -n devops-status-system -l app.kubernetes.io/managed-by=devops-status,app.kubernetes.io/component=cluster-onboarding",
 			"Return here after the Job completes to verify status.",
 		}
 	}
@@ -361,7 +400,10 @@ func buildOnboardingInstructions(externalURL string, isDev bool) []string {
 
 	return []string{
 		"Copy the command below and run it on the target cluster (kubectl context must target that cluster).",
+		"It deletes the legacy Job devops-status-register if it still exists, then applies a new registration Job (unique name per handshake — Kubernetes Jobs cannot be updated in place).",
 		"The Job connects to your backend via Cloudflare tunnel (" + externalURL + ").",
+		"The API URL uses a DNS trailing dot on the hostname so pods resolve it as a full internet name (avoids *.svc.cluster.local search confusing external hosts). If you still see curl exit 6, check CoreDNS / upstream DNS and egress; exit 7 means TCP connect failed.",
+		"Optional cleanup of completed onboarding Jobs: kubectl delete jobs -n devops-status-system -l app.kubernetes.io/managed-by=devops-status,app.kubernetes.io/component=cluster-onboarding",
 		"Return here after the Job completes to verify status; use \"Add API token\" if the Job failed.",
 	}
 }

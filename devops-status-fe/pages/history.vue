@@ -143,15 +143,16 @@ function formatDate(iso: string) {
 
 <style scoped>
 .history-page { padding-top: 16px; }
-.page-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; }
-.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--color-border); margin-bottom: 16px; }
-.tab { padding: 10px 20px; font-size: 0.9rem; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; color: var(--color-text-secondary); transition: color 0.15s, border-color 0.15s; }
+.page-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; letter-spacing: -0.02em; color: var(--color-text); }
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--color-border-strong); margin-bottom: 16px; }
+.tab { padding: 10px 20px; font-size: 0.875rem; font-weight: 500; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; color: var(--color-text-secondary); transition: color 0.15s, border-color 0.15s; }
 .tab:hover { color: var(--color-text); }
-.tab--active { color: var(--color-text); border-bottom-color: var(--color-text); font-weight: 600; }
-.filter-row { display: flex; gap: 12px; margin-bottom: 20px; }
-.filter-select { padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 0.85rem; }
+.tab--active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
+.filter-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.filter-select { padding: 8px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); font-size: 0.875rem; font-family: inherit; background: var(--color-bg); color: var(--color-text); }
+.filter-select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-muted); }
 .incident-list { display: flex; flex-direction: column; gap: 12px; }
-.incident-item { border-left: 3px solid var(--color-orange); padding: 12px 16px; background: var(--color-bg-secondary); border-radius: 0 var(--radius) var(--radius) 0; }
+.incident-item { border-left: 3px solid var(--color-orange); padding: 12px 16px; background: var(--color-bg); border: 1px solid var(--color-border-strong); border-radius: 0 var(--radius) var(--radius) 0; box-shadow: var(--shadow-card); }
 .incident-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .incident-title { font-weight: 600; font-size: 0.9rem; }
 .severity--major { color: var(--color-red); }

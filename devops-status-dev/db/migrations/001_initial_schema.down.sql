@@ -15,7 +15,7 @@ DROP TABLE IF EXISTS k8s_api_capabilities;
 DROP TABLE IF EXISTS k8s_cluster_credentials;
 DROP TABLE IF EXISTS k8s_cluster_handshakes;
 DROP TABLE IF EXISTS k8s_clusters;
-DROP TABLE IF EXISTS data_sources;
+DROP TABLE IF EXISTS telemetry;
 DROP TABLE IF EXISTS environment_service_membership;
 DROP TABLE IF EXISTS services;
 DROP TABLE IF EXISTS environments;

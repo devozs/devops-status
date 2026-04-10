@@ -15,6 +15,7 @@ type KubernetesAdapter struct{}
 
 type KubernetesConfig struct {
 	ClusterID        string `json:"cluster_id"`
+	K8sVersion       string `json:"k8s_version,omitempty"`
 	Endpoint         string `json:"endpoint"`
 	Token            string `json:"token,omitempty"`
 	InsecureSkipTLS  bool   `json:"insecure_skip_tls,omitempty"`

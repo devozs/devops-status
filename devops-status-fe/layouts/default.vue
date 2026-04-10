@@ -37,7 +37,7 @@ onMounted(() => startPolling())
 }
 
 .site-header {
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-strong);
   background: var(--color-bg);
   position: sticky;
   top: 0;
@@ -58,8 +58,10 @@ onMounted(() => startPolling())
 }
 
 .logo {
-  font-size: 1.25rem;
+  font-size: 1.05rem;
   font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
 }
 
 .header-nav {
@@ -68,24 +70,30 @@ onMounted(() => startPolling())
 }
 
 .nav-link {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--color-text-secondary);
   transition: color 0.15s;
 }
 
-.nav-link:hover,
-.nav-link.router-link-active {
+.nav-link:hover {
   color: var(--color-text);
+}
+
+.nav-link.router-link-active {
+  color: var(--color-primary);
 }
 
 .site-main {
   flex: 1;
   padding: 32px 0;
+  background: var(--color-canvas);
 }
 
 .site-footer {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-strong);
   padding: 24px 0;
+  background: var(--color-bg);
 }
 
 .footer-inner {
@@ -109,5 +117,6 @@ onMounted(() => startPolling())
 
 .admin-link:hover {
   opacity: 1;
+  color: var(--color-primary);
 }
 </style>

@@ -9,31 +9,33 @@ import (
 
 	"github.com/devops-status/be/internal/adapter"
 	"github.com/devops-status/be/internal/engine"
+	"github.com/devops-status/be/internal/secrets"
 	"github.com/devops-status/be/internal/store"
 	"github.com/google/uuid"
 )
 
 type ProbeJob struct {
-	TargetType   string
-	TargetID     uuid.UUID
-	ProbeKind    string
-	DataSourceID uuid.UUID
-	Adapter      string
-	ConfigJSON   json.RawMessage
-	IntervalSec  int
-	WindowSize   int
-	FailuresDown int
-	SuccessUp    int
+	TargetType    string
+	TargetID      uuid.UUID
+	TelemetryID   uuid.UUID
+	Adapter       string
+	ConfigJSON    json.RawMessage
+	QosThresholds json.RawMessage
+	IntervalSec   int
+	WindowSize    int
+	FailuresDown  int
+	SuccessUp     int
 }
 
-type bindingKey struct {
-	TargetType string
-	TargetID   uuid.UUID
-	ProbeKind  string
+type scheduleKey struct {
+	TargetType  string
+	TargetID    uuid.UUID
+	TelemetryID uuid.UUID
 }
 
 type Scheduler struct {
 	store          *store.Store
+	secret         *secrets.Store
 	evaluator      *engine.StatusEvaluator
 	incidents      *engine.IncidentManager
 	workerCount    int
@@ -44,22 +46,23 @@ type Scheduler struct {
 	ticker         *time.Ticker
 
 	mu        sync.Mutex
-	lastProbe map[bindingKey]time.Time
+	lastProbe map[scheduleKey]time.Time
 }
 
-func New(s *store.Store, eval *engine.StatusEvaluator, inc *engine.IncidentManager, workers int, k8sInsecureTLS bool) *Scheduler {
+func New(s *store.Store, sec *secrets.Store, eval *engine.StatusEvaluator, inc *engine.IncidentManager, workers int, k8sInsecureTLS bool) *Scheduler {
 	if workers <= 0 {
 		workers = 5
 	}
 	return &Scheduler{
 		store:          s,
+		secret:         sec,
 		evaluator:      eval,
 		incidents:      inc,
 		workerCount:    workers,
 		k8sInsecureTLS: k8sInsecureTLS,
 		jobs:           make(chan ProbeJob, 200),
 		stopCh:         make(chan struct{}),
-		lastProbe:      make(map[bindingKey]time.Time),
+		lastProbe:      make(map[scheduleKey]time.Time),
 	}
 }
 
@@ -102,7 +105,7 @@ func (sc *Scheduler) scheduler(ctx context.Context) {
 	}
 }
 
-func (sc *Scheduler) isDue(key bindingKey, intervalSec int) bool {
+func (sc *Scheduler) isDue(key scheduleKey, intervalSec int) bool {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -117,40 +120,41 @@ func (sc *Scheduler) isDue(key bindingKey, intervalSec int) bool {
 	return time.Since(last) >= interval
 }
 
-func (sc *Scheduler) markProbed(key bindingKey) {
+func (sc *Scheduler) markProbed(key scheduleKey) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.lastProbe[key] = time.Now()
 }
 
 func (sc *Scheduler) loadAndDispatch(ctx context.Context) {
-	svcBindings, err := sc.store.ListServiceProbeBindings(ctx, nil)
+	svcLinks, err := sc.store.ListServiceTelemetryLinks(ctx, nil)
 	if err != nil {
-		slog.Error("load service bindings", "error", err)
+		slog.Error("load service telemetry links", "error", err)
 	}
-	for _, b := range svcBindings {
-		key := bindingKey{TargetType: "service", TargetID: b.ServiceID, ProbeKind: b.ProbeKind}
+	for _, b := range svcLinks {
+		key := scheduleKey{TargetType: "service", TargetID: b.ServiceID, TelemetryID: b.TelemetryID}
 		if !sc.isDue(key, b.SampleIntervalSec) {
 			continue
 		}
-		ds, err := sc.store.GetDataSourceByID(ctx, b.DataSourceID)
+		t, err := sc.store.GetTelemetryByID(ctx, b.TelemetryID)
 		if err != nil {
-			slog.Error("load data source for binding", "binding_id", b.ID, "error", err)
+			slog.Error("load telemetry for service link", "link_id", b.ID, "error", err)
 			continue
 		}
-		cfgBytes, _ := json.Marshal(ds.ConfigJSON)
+		cfgBytes, _ := json.Marshal(t.ConfigJSON)
+		qosBytes, _ := json.Marshal(t.QosThresholds)
 		select {
 		case sc.jobs <- ProbeJob{
-			TargetType:   "service",
-			TargetID:     b.ServiceID,
-			ProbeKind:    b.ProbeKind,
-			DataSourceID: b.DataSourceID,
-			Adapter:      ds.Adapter,
-			ConfigJSON:   cfgBytes,
-			IntervalSec:  b.SampleIntervalSec,
-			WindowSize:   b.WindowSize,
-			FailuresDown: b.ConsecutiveFailuresToDown,
-			SuccessUp:    b.ConsecutiveSuccessToRecover,
+			TargetType:    "service",
+			TargetID:      b.ServiceID,
+			TelemetryID:   b.TelemetryID,
+			Adapter:       t.Adapter,
+			ConfigJSON:    cfgBytes,
+			QosThresholds: qosBytes,
+			IntervalSec:   b.SampleIntervalSec,
+			WindowSize:    b.WindowSize,
+			FailuresDown:  b.ConsecutiveFailuresToDown,
+			SuccessUp:     b.ConsecutiveSuccessToRecover,
 		}:
 			sc.markProbed(key)
 		default:
@@ -158,33 +162,34 @@ func (sc *Scheduler) loadAndDispatch(ctx context.Context) {
 		}
 	}
 
-	envBindings, err := sc.store.ListEnvironmentProbeBindings(ctx, nil)
+	envLinks, err := sc.store.ListEnvironmentTelemetryLinks(ctx, nil)
 	if err != nil {
-		slog.Error("load environment bindings", "error", err)
+		slog.Error("load environment telemetry links", "error", err)
 	}
-	for _, b := range envBindings {
-		key := bindingKey{TargetType: "environment", TargetID: b.EnvironmentID, ProbeKind: b.ProbeKind}
+	for _, b := range envLinks {
+		key := scheduleKey{TargetType: "environment", TargetID: b.EnvironmentID, TelemetryID: b.TelemetryID}
 		if !sc.isDue(key, b.SampleIntervalSec) {
 			continue
 		}
-		ds, err := sc.store.GetDataSourceByID(ctx, b.DataSourceID)
+		t, err := sc.store.GetTelemetryByID(ctx, b.TelemetryID)
 		if err != nil {
-			slog.Error("load data source for binding", "binding_id", b.ID, "error", err)
+			slog.Error("load telemetry for environment link", "link_id", b.ID, "error", err)
 			continue
 		}
-		cfgBytes, _ := json.Marshal(ds.ConfigJSON)
+		cfgBytes, _ := json.Marshal(t.ConfigJSON)
+		qosBytes, _ := json.Marshal(t.QosThresholds)
 		select {
 		case sc.jobs <- ProbeJob{
-			TargetType:   "environment",
-			TargetID:     b.EnvironmentID,
-			ProbeKind:    b.ProbeKind,
-			DataSourceID: b.DataSourceID,
-			Adapter:      ds.Adapter,
-			ConfigJSON:   cfgBytes,
-			IntervalSec:  b.SampleIntervalSec,
-			WindowSize:   b.WindowSize,
-			FailuresDown: b.ConsecutiveFailuresToDown,
-			SuccessUp:    b.ConsecutiveSuccessToRecover,
+			TargetType:    "environment",
+			TargetID:      b.EnvironmentID,
+			TelemetryID:   b.TelemetryID,
+			Adapter:       t.Adapter,
+			ConfigJSON:    cfgBytes,
+			QosThresholds: qosBytes,
+			IntervalSec:   b.SampleIntervalSec,
+			WindowSize:    b.WindowSize,
+			FailuresDown:  b.ConsecutiveFailuresToDown,
+			SuccessUp:     b.ConsecutiveSuccessToRecover,
 		}:
 			sc.markProbed(key)
 		default:
@@ -207,6 +212,21 @@ func (sc *Scheduler) worker(ctx context.Context, id int) {
 	}
 }
 
+func cloneMetadata(m map[string]any) map[string]any {
+	if m == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func hasQoSBytes(q []byte) bool {
+	return len(q) > 0 && string(q) != "{}" && string(q) != "null"
+}
+
 func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 	a, err := adapter.Get(job.Adapter)
 	if err != nil {
@@ -220,10 +240,24 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		return
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	cfgJSON, err = sc.store.ResolveTelemetryProbeConfig(ctx, sc.secret, job.Adapter, cfgJSON)
+	if err != nil {
+		slog.Error("resolve telemetry probe config", "error", err)
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	result, err := a.Probe(probeCtx, cfgJSON)
+	var result *adapter.ProbeResult
+	if job.Adapter == "cli" && adapter.HasCLIMetricQoS(cfgJSON, job.QosThresholds) {
+		result, err = adapter.RunCLIMetricShellProbe(probeCtx, a, cfgJSON, job.QosThresholds)
+	} else if job.Adapter == "cli" && adapter.HasCLIPQoSThresholds(job.QosThresholds) {
+		result, err = adapter.RunCLIPQoSProbe(probeCtx, a, cfgJSON, job.QosThresholds)
+	}
+	if result == nil {
+		result, err = a.Probe(probeCtx, cfgJSON)
+	}
 	if err != nil {
 		slog.Error("probe execution error", "adapter", job.Adapter, "target", job.TargetID, "error", err)
 		result = &adapter.ProbeResult{
@@ -234,15 +268,22 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 	}
 
 	var rawVal *float64
-	if result.RawValue != 0 {
+	if job.Adapter == "cli" && adapter.HasCLIMetricQoS(cfgJSON, job.QosThresholds) && adapter.CLIMetricValueKind(job.QosThresholds) == "number" {
+		if result.Success {
+			v := result.RawValue
+			rawVal = &v
+		}
+	} else if result.RawValue != 0 {
 		rawVal = &result.RawValue
 	}
 	latency := &result.LatencyMs
 
-	rec := store.SampleRecord{
+	tid := job.TelemetryID
+	opRec := store.SampleRecord{
 		TargetType:   job.TargetType,
 		TargetID:     job.TargetID,
-		ProbeKind:    job.ProbeKind,
+		TelemetryID:  &tid,
+		ProbeKind:    "operational",
 		SampledAt:    result.ProbedAt,
 		Success:      result.Success,
 		RawValue:     rawVal,
@@ -251,10 +292,41 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		SourceTrace:  result.Trace,
 	}
 
-	if err := sc.store.InsertSampleResult(ctx, rec); err != nil {
-		slog.Error("store sample result", "error", err)
+	if job.Adapter == "cli" {
+		opRec.MetadataJSON = adapter.TrimCLIProbeMetadata(opRec.MetadataJSON)
+	}
+	if err := sc.store.InsertSampleResult(ctx, opRec); err != nil {
+		slog.Error("store operational sample", "error", err)
 		return
 	}
 
-	sc.evaluator.Evaluate(ctx, job.TargetType, job.TargetID, job.ProbeKind, job.WindowSize, job.FailuresDown, job.SuccessUp)
+	emptyQos := json.RawMessage(`{}`)
+	sc.evaluator.Evaluate(ctx, job.TargetType, job.TargetID, "operational", job.WindowSize, job.FailuresDown, job.SuccessUp, job.Adapter, emptyQos, &tid)
+
+	if hasQoSBytes(job.QosThresholds) && result.Success {
+		meta := cloneMetadata(result.Metadata)
+		if lvl := adapter.QoSLevelFromProbe(job.Adapter, job.QosThresholds, result, true); lvl != "" {
+			meta["qos_level"] = lvl
+		}
+		qosRec := store.SampleRecord{
+			TargetType:   job.TargetType,
+			TargetID:     job.TargetID,
+			TelemetryID:  &tid,
+			ProbeKind:    "qos",
+			SampledAt:    result.ProbedAt,
+			Success:      true,
+			RawValue:     rawVal,
+			LatencyMs:    latency,
+			MetadataJSON: meta,
+			SourceTrace:  result.Trace,
+		}
+		if job.Adapter == "cli" {
+			qosRec.MetadataJSON = adapter.TrimCLIProbeMetadata(qosRec.MetadataJSON)
+		}
+		if err := sc.store.InsertSampleResult(ctx, qosRec); err != nil {
+			slog.Error("store qos sample", "error", err)
+			return
+		}
+		sc.evaluator.Evaluate(ctx, job.TargetType, job.TargetID, "qos", job.WindowSize, job.FailuresDown, job.SuccessUp, job.Adapter, job.QosThresholds, &tid)
+	}
 }

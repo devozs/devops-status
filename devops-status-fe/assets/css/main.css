@@ -1,17 +1,61 @@
 :root {
+  /* Nebius-aligned neutrals */
   --color-bg: #ffffff;
   --color-bg-secondary: #f9fafb;
-  --color-text: #1f2937;
+  --color-canvas: #f9fafb;
+  --color-text: #111827;
   --color-text-secondary: #6b7280;
+  --color-text-muted: #8e8e93;
   --color-border: #e5e7eb;
-  --color-green: #22c55e;
-  --color-yellow: #eab308;
-  --color-red: #ef4444;
-  --color-orange: #f97316;
-  --color-banner-ok: #22c55e;
-  --color-banner-disruption: #f97316;
+  --color-border-strong: #e0e0e0;
+  /* Admin data tables: Nebius-style floating header + framed tbody */
+  --color-table-row-divider: #ebedef;
+  /* Muted blue-grey column labels (above the rounded grid) */
+  --color-table-header-text: rgba(27, 45, 79, 0.55);
+  /* Thin outer shell around data rows only */
+  --color-table-frame: #d1dae3;
+  --radius-table-shell: 16px;
+
+  /* Primary (console CTAs / focus) */
+  --color-primary: #5a5dff;
+  --color-primary-hover: #4840e6;
+  --color-primary-muted: rgba(90, 93, 255, 0.12);
+
+  /* Admin shell (Nebius-like sidebar) */
+  --admin-sidebar-bg: #2b2d35;
+  --admin-sidebar-border: rgba(255, 255, 255, 0.07);
+  --admin-sidebar-text: #9ca3af;
+  --admin-sidebar-text-active: #ffffff;
+  --admin-sidebar-hover-bg: rgba(255, 255, 255, 0.07);
+  --admin-sidebar-active-bg: rgba(255, 255, 255, 0.12);
+  --admin-nav-active-dot: #4ade80;
+  --admin-nav-active-dot-glow: rgba(74, 222, 128, 0.45);
+  --admin-main-bg: #f9fafb;
+
+  /* Table resource icon tile (shared with dashboard cards) */
+  --gradient-resource-tile: linear-gradient(135deg, #6ee7b7 0%, #2dd4bf 45%, #22d3ee 100%);
+
+  /* Semantic status (unchanged meaning) */
+  --color-green: #16a34a;
+  --color-yellow: #ca8a04;
+  --color-red: #dc2626;
+  --color-orange: #ea580c;
+  --color-banner-ok: #15803d;
+  --color-banner-disruption: #c2410c;
+
+  /* Callouts */
+  --callout-info-bg: #eff6ff;
+  --callout-info-border: #bfdbfe;
+  --callout-info-text: #1e40af;
+  --callout-warning-bg: #fffbeb;
+  --callout-warning-border: #fde68a;
+  --callout-warning-text: #92400e;
+
   --radius: 8px;
+  --radius-sm: 6px;
+  --radius-pill: 9999px;
   --max-width: 960px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 * {
@@ -21,10 +65,11 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background: var(--color-bg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--color-canvas);
   color: var(--color-text);
   line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 .container {

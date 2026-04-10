@@ -21,20 +21,22 @@ const bannerClass = computed(() => ({
   padding: 16px 24px;
   border-radius: var(--radius);
   margin-bottom: 32px;
+  box-shadow: var(--shadow-card);
 }
 
 .banner--ok {
-  background: var(--color-banner-ok);
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%);
   color: #ffffff;
 }
 
 .banner--disruption {
-  background: var(--color-banner-disruption);
+  background: linear-gradient(135deg, #c2410c 0%, #9a3412 100%);
   color: #ffffff;
 }
 
 .banner-text {
   font-size: 1rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 </style>

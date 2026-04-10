@@ -18,46 +18,55 @@ type AdminUser struct {
 }
 
 type Environment struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description"`
-	EnvType     string    `json:"env_type"`
-	IsPublic    bool      `json:"is_public"`
-	Criticality string    `json:"criticality"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            uuid.UUID  `json:"id"`
+	Name          string     `json:"name"`
+	Slug          string     `json:"slug"`
+	Description   string     `json:"description"`
+	EnvType       string     `json:"env_type"`
+	IsPublic      bool       `json:"is_public"`
+	Criticality   string     `json:"criticality"`
+	K8sClusterID  *uuid.UUID `json:"k8s_cluster_id,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type Service struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description"`
-	IsPublic    bool      `json:"is_public"`
-	Criticality string    `json:"criticality"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                 uuid.UUID  `json:"id"`
+	Name               string     `json:"name"`
+	Slug               string     `json:"slug"`
+	Description        string     `json:"description"`
+	IsPublic           bool       `json:"is_public"`
+	Criticality        string     `json:"criticality"`
+	ServiceProviderID  *uuid.UUID `json:"service_provider_id,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
-type EnvironmentServiceMembership struct {
-	ID            uuid.UUID `json:"id"`
-	EnvironmentID uuid.UUID `json:"environment_id"`
-	ServiceID     uuid.UUID `json:"service_id"`
-	CreatedAt     time.Time `json:"created_at"`
+type ServiceProvider struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Host         string    `json:"host"`
+	Port         int       `json:"port"`
+	ImageURL     string    `json:"image_url"`
+	ProviderType string    `json:"provider_type"`
+	ConfigJSON   any       `json:"config_json"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-type DataSource struct {
-	ID         uuid.UUID `json:"id"`
-	Name       string    `json:"name"`
-	DSType     string    `json:"ds_type"`
-	Adapter    string    `json:"adapter"`
-	ConfigJSON any       `json:"config_json"`
-	SecretRef  string    `json:"-"`
-	TimeoutMs  int       `json:"timeout_ms"`
-	Retries    int       `json:"retries"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+type Telemetry struct {
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	DisplayName     string    `json:"display_name,omitempty"`
+	Adapter         string    `json:"adapter"`
+	ConfigJSON      any       `json:"config_json"`
+	QosThresholds   any       `json:"qos_thresholds,omitempty"`
+	ExecutionTarget string    `json:"execution_target"`
+	SecretRef       string    `json:"-"`
+	TimeoutMs       int       `json:"timeout_ms"`
+	Retries         int       `json:"retries"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type Incident struct {
@@ -82,11 +91,10 @@ type IncidentUpdate struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-type ServiceProbeBinding struct {
+type ServiceTelemetryLink struct {
 	ID                           uuid.UUID `json:"id"`
 	ServiceID                    uuid.UUID `json:"service_id"`
-	ProbeKind                    string    `json:"probe_kind"`
-	DataSourceID                 uuid.UUID `json:"data_source_id"`
+	TelemetryID                  uuid.UUID `json:"telemetry_id"`
 	SampleIntervalSec            int       `json:"sample_interval_sec"`
 	WindowSize                   int       `json:"window_size"`
 	ConsecutiveFailuresToDown    int       `json:"consecutive_failures_to_down"`
@@ -95,11 +103,10 @@ type ServiceProbeBinding struct {
 	UpdatedAt                    time.Time `json:"updated_at"`
 }
 
-type EnvironmentProbeBinding struct {
+type EnvironmentTelemetryLink struct {
 	ID                           uuid.UUID `json:"id"`
 	EnvironmentID                uuid.UUID `json:"environment_id"`
-	ProbeKind                    string    `json:"probe_kind"`
-	DataSourceID                 uuid.UUID `json:"data_source_id"`
+	TelemetryID                  uuid.UUID `json:"telemetry_id"`
 	SampleIntervalSec            int       `json:"sample_interval_sec"`
 	WindowSize                   int       `json:"window_size"`
 	ConsecutiveFailuresToDown    int       `json:"consecutive_failures_to_down"`

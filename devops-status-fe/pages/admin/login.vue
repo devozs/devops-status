@@ -79,11 +79,12 @@ async function handleLogin() {
 
 .login-card {
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   padding: 40px;
   width: 100%;
   max-width: 400px;
+  box-shadow: var(--shadow-card);
 }
 
 .login-title {
@@ -113,15 +114,17 @@ async function handleLogin() {
 
 .form-input {
   padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
 }
 
 .form-input:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-muted);
 }
 
 .password-wrapper {
@@ -159,17 +162,18 @@ async function handleLogin() {
 
 .login-button {
   padding: 10px 16px;
-  background: #1f2937;
+  background: var(--color-primary);
   color: #ffffff;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
-  font-weight: 500;
+  font-weight: 600;
   transition: background 0.15s;
+  font-family: inherit;
 }
 
 .login-button:hover:not(:disabled) {
-  background: #374151;
+  background: var(--color-primary-hover);
 }
 
 .login-button:disabled {

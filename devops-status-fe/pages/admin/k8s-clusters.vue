@@ -1,14 +1,19 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header page-header--compact">
       <h1 class="page-title">Kubernetes Clusters</h1>
-      <button class="btn btn-primary" @click="showCreate = true">Add Cluster</button>
+      <button type="button" class="btn btn-primary btn-pill" @click="showCreate = true">
+        <Plus class="btn-leading-icon" :size="18" :stroke-width="2" />
+        Add cluster
+      </button>
     </div>
-    <p class="page-hint">
-      <strong>Revoke</strong> marks the cluster disconnected in this app: it invalidates the onboarding handshake and
-      <em>deactivates the stored API token</em> so DevOps Status stops calling your Kubernetes API. It does not remove
-      RBAC or namespaces in your cluster; delete those with kubectl if you want them gone.
-    </p>
+    <AdminCallout variant="warning">
+      <p>
+        <strong>Revoke</strong> marks the cluster disconnected in this app: it invalidates the onboarding handshake and
+        <em>deactivates the stored API token</em> so DevOps Status stops calling your Kubernetes API. It does not remove
+        RBAC or namespaces in your cluster; delete those with kubectl if you want them gone.
+      </p>
+    </AdminCallout>
 
     <div v-if="backendContext" class="backend-url-card">
       <div class="backend-url-row">
@@ -28,93 +33,139 @@
       <span v-if="loadErrorHint" class="load-error-hint">{{ loadErrorHint }}</span>
     </p>
 
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Name</th><th>Endpoint</th><th>Version</th><th>Status</th><th>API creds</th><th>API live check</th><th>Actions</th></tr></thead>
-        <tbody>
-          <tr v-for="c in clusters" :key="c.id">
-            <td>{{ c.name }}</td>
-            <td class="mono">{{ c.endpoint }}</td>
-            <td>{{ c.k8s_version || '-' }}</td>
-            <td>
-              <span class="status-badge" :class="statusBadgeClass(c)">{{ statusBadgeLabel(c) }}</span>
-            </td>
-            <td>
-              <span v-if="c.has_api_credential" class="cred-yes" title="Stored token for Kubernetes probes">Yes</span>
-              <span v-else class="cred-no" title="No token — probes using cluster_id will not authenticate">No</span>
-            </td>
-            <td class="ping-cell">
-              <template v-if="c.status === 'connected' && c.has_api_credential">
-                <div class="ping-box" :class="pingClass(c.id)">
-                  <button type="button" class="btn btn-sm" :disabled="pingById[c.id]?.loading" @click="verifyCluster(c)">
-                    {{ pingById[c.id]?.loading ? 'Checking…' : 'Verify API' }}
-                  </button>
-                  <div v-if="pingById[c.id] && !pingById[c.id]?.loading && pingById[c.id]?.at" class="ping-result">
-                    <span v-if="pingById[c.id]?.ok" class="ping-ok">{{ pingById[c.id]?.k8s_version || 'OK' }}</span>
-                    <span v-else class="ping-bad">{{ pingById[c.id]?.message }}</span>
-                    <span class="ping-time">{{ formatPingTime(pingById[c.id]?.at) }}</span>
-                  </div>
-                  <p class="ping-caption">
-                    Verify uses <code class="ping-code">NUXT_PUBLIC_API_BASE</code> → this app then runs <code class="ping-code">GET /version</code> on the cluster API with the stored token (not the public URL above).
-                    Private CA / TLS: <code class="ping-code">K8S_INSECURE_SKIP_TLS_VERIFY=true</code> in <code class="ping-code">.env.dev</code> and restart the backend.
-                  </p>
-                </div>
-              </template>
-              <span v-else class="ping-na">—</span>
-            </td>
-            <td class="actions-cell">
-              <button v-if="c.status !== 'connected'" class="btn btn-sm" @click="onboard(c)">Onboard</button>
-              <button v-if="c.status === 'pending_registration'" class="btn btn-sm btn-success" @click="openManualModal(c)">Manual Register</button>
-              <button v-if="c.status === 'connected' && !c.has_api_credential" class="btn btn-sm btn-success" @click="openTokenModal(c)">Add API token</button>
-              <button v-if="c.status === 'connected'" class="btn btn-sm btn-danger" @click="revoke(c.id)">Revoke</button>
-              <button class="btn btn-sm btn-danger" @click="deleteCluster(c.id)">Delete</button>
-            </td>
-          </tr>
-          <tr v-if="!clusters?.length"><td colspan="7" class="empty-row">No clusters registered.</td></tr>
-        </tbody>
-      </table>
+    <div class="table-panel">
+      <div class="table-split-scroll">
+        <table class="data-table data-table--head">
+          <colgroup>
+            <col style="width: 14%" />
+            <col style="width: 22%" />
+            <col style="width: 9%" />
+            <col style="width: 12%" />
+            <col style="width: 8%" />
+            <col style="width: 23%" />
+            <col style="width: 12%" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Endpoint</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th>API creds</th>
+              <th>API live check</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+        </table>
+        <div class="table-body-shell">
+          <table class="data-table data-table--body">
+            <colgroup>
+              <col style="width: 14%" />
+              <col style="width: 22%" />
+              <col style="width: 9%" />
+              <col style="width: 12%" />
+              <col style="width: 8%" />
+              <col style="width: 23%" />
+              <col style="width: 12%" />
+            </colgroup>
+            <tbody>
+              <tr v-for="c in clusters" :key="c.id">
+                <td>{{ c.name }}</td>
+                <td class="mono">{{ c.endpoint }}</td>
+                <td>{{ c.k8s_version || '-' }}</td>
+                <td>
+                  <span class="status-badge" :class="statusBadgeClass(c)">{{ statusBadgeLabel(c) }}</span>
+                </td>
+                <td>
+                  <span v-if="c.has_api_credential" class="cred-yes" title="Stored token for Kubernetes probes">Yes</span>
+                  <span v-else class="cred-no" title="No token — probes using cluster_id will not authenticate">No</span>
+                </td>
+                <td class="ping-cell">
+                  <template v-if="c.status === 'connected' && c.has_api_credential">
+                    <div class="ping-box" :class="pingClass(c.id)">
+                      <button type="button" class="btn btn-sm" :disabled="pingById[c.id]?.loading" @click="verifyCluster(c)">
+                        {{ pingById[c.id]?.loading ? 'Checking…' : 'Verify API' }}
+                      </button>
+                      <div v-if="pingById[c.id] && !pingById[c.id]?.loading && pingById[c.id]?.at" class="ping-result">
+                        <span v-if="pingById[c.id]?.ok" class="ping-ok">{{ pingById[c.id]?.k8s_version || 'OK' }}</span>
+                        <span v-else class="ping-bad">{{ pingById[c.id]?.message }}</span>
+                        <span class="ping-time">{{ formatPingTime(pingById[c.id]?.at) }}</span>
+                      </div>
+                      <p class="ping-caption">
+                        Verify uses <code class="ping-code">NUXT_PUBLIC_API_BASE</code> → this app then runs <code class="ping-code">GET /version</code> on the cluster API with the stored token (not the public URL above).
+                        Private CA / TLS: <code class="ping-code">K8S_INSECURE_SKIP_TLS_VERIFY=true</code> in <code class="ping-code">.env.dev</code> and restart the backend.
+                      </p>
+                    </div>
+                  </template>
+                  <span v-else class="ping-na">—</span>
+                </td>
+                <td class="actions-cell">
+                  <button v-if="c.status !== 'connected'" class="btn btn-sm" @click="onboard(c)">Onboard</button>
+                  <button v-if="c.status === 'pending_registration'" class="btn btn-sm btn-success" @click="openManualModal(c)">Manual Register</button>
+                  <button v-if="c.status === 'connected' && !c.has_api_credential" class="btn btn-sm btn-success" @click="openTokenModal(c)">Add API token</button>
+                  <button v-if="c.status === 'connected'" class="btn btn-sm btn-danger" @click="requestRevokeCluster(c)">Revoke</button>
+                  <button class="btn btn-sm btn-danger" @click="requestDeleteCluster(c)">Delete</button>
+                </td>
+              </tr>
+              <tr v-if="!clusters?.length"><td colspan="7" class="empty-row">No clusters registered.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- Onboarding modal -->
-    <div v-if="onboardData" class="modal-overlay" @click.self="onboardData = null">
+    <div v-if="onboardData" class="modal-overlay" @click.self="closeOnboardModal">
       <div class="modal-card modal-card--wide">
-        <h2 class="modal-title">Onboarding Instructions</h2>
+        <AdminModalStepper
+          v-if="onboardTwoSteps"
+          :steps="['Instructions', 'Run command']"
+          :current-step="onboardUiStep"
+        />
+        <h2 class="modal-title">Cluster onboarding</h2>
+        <p class="modal-subtitle">Follow the steps to register the agent in your cluster.</p>
 
-        <!-- Environment status bar (dev only) -->
-        <div v-if="onboardData.is_dev" class="tunnel-status" :class="tunnelIsActive ? 'tunnel-status--ok' : 'tunnel-status--warn'">
-          <span v-if="tunnelIsActive" class="tunnel-dot tunnel-dot--green" />
-          <span v-else class="tunnel-dot tunnel-dot--red" />
-          <span v-if="tunnelIsActive">Tunnel active: {{ onboardData.external_url }}</span>
-          <span v-else>Backend URL is {{ onboardData.external_url }} &mdash; K8s pods cannot reach it</span>
+        <div v-show="!onboardTwoSteps || onboardUiStep === 0">
+          <div v-if="onboardData.is_dev" class="tunnel-status" :class="tunnelIsActive ? 'tunnel-status--ok' : 'tunnel-status--warn'">
+            <span v-if="tunnelIsActive" class="tunnel-dot tunnel-dot--green" />
+            <span v-else class="tunnel-dot tunnel-dot--red" />
+            <span v-if="tunnelIsActive">Tunnel active: {{ onboardData.external_url }}</span>
+            <span v-else>Backend URL is {{ onboardData.external_url }} &mdash; K8s pods cannot reach it</span>
+          </div>
+
+          <ol class="instructions">
+            <li v-for="(step, i) in onboardData.instructions" :key="i">{{ step }}</li>
+          </ol>
         </div>
 
-        <ol class="instructions">
-          <li v-for="(step, i) in onboardData.instructions" :key="i">{{ step }}</li>
-        </ol>
-
-        <!-- Show command block only when URL is reachable (tunnel active or production) -->
-        <template v-if="tunnelIsActive || !onboardData.is_dev">
+        <div v-show="onboardTwoSteps && onboardUiStep === 1">
           <div class="command-block">
             <div class="command-header">
               <label class="form-label">Run on target cluster</label>
-              <button class="btn btn-sm" @click="copyCommand">{{ copied ? 'Copied!' : 'Copy' }}</button>
+              <button type="button" class="btn btn-sm" @click="copyCommand">{{ copied ? 'Copied!' : 'Copy' }}</button>
             </div>
             <pre class="command-pre" ref="commandRef">{{ onboardData.command }}</pre>
           </div>
           <p class="token-info">Handshake expires at: {{ formatExpiry(onboardData.expires_at) }}</p>
           <p v-if="onboardData.is_dev" class="help-note">Command uses Cloudflare tunnel. If the Job still fails, use <strong>Manual Register</strong> and paste a token from <code>kubectl create token</code>.</p>
-        </template>
+        </div>
 
-        <!-- Dev localhost fallback -->
-        <template v-else>
-          <div class="localhost-warn">
-            <p>The kubectl command is not shown because pods cannot reach <code>{{ onboardData.external_url }}</code>.</p>
-            <p>Start the tunnel: <code>make dev-infra-up && make be-run</code> &mdash; then re-open this modal.</p>
-            <p>Or use <strong>Manual Register</strong> with a token from: <code>kubectl create token devops-status-agent -n devops-status-system --duration=24h</code></p>
-          </div>
-        </template>
+        <div v-show="!onboardTwoSteps && onboardData.is_dev && !tunnelIsActive" class="localhost-warn">
+          <p>The kubectl command is not shown because pods cannot reach <code>{{ onboardData.external_url }}</code>.</p>
+          <p>Start the tunnel: <code>make dev-infra-up && make be-run</code> &mdash; then re-open this modal.</p>
+          <p>Or use <strong>Manual Register</strong> with a token from: <code>kubectl create token devops-status-agent -n devops-status-system --duration=24h</code></p>
+        </div>
 
-        <div class="modal-actions"><button class="btn" @click="onboardData = null">Close</button></div>
+        <div class="modal-actions">
+          <template v-if="onboardTwoSteps">
+            <button v-if="onboardUiStep > 0" type="button" class="btn" @click="onboardUiStep--">Back</button>
+            <button v-if="onboardUiStep === 0" type="button" class="btn btn-primary btn-pill" @click="onboardUiStep++">
+              Next
+              <ChevronRight class="btn-leading-icon" :size="18" :stroke-width="2" />
+            </button>
+          </template>
+          <button type="button" class="btn" @click="closeOnboardModal">Close</button>
+        </div>
       </div>
     </div>
 
@@ -122,6 +173,7 @@
     <div v-if="manualModalCluster" class="modal-overlay" @click.self="manualModalCluster = null">
       <div class="modal-card modal-card--wide">
         <h2 class="modal-title">{{ manualModalMode === 'register' ? 'Manual cluster registration' : 'Add Kubernetes API token' }}</h2>
+        <p class="modal-subtitle">Paste a bearer token for the DevOps Status agent service account.</p>
         <p v-if="manualModalMode === 'register'" class="help-note">
           Completes the handshake. Paste the service account token so the status app can call your API server (same token the onboarding Job would send).
         </p>
@@ -146,12 +198,14 @@
     <!-- Create modal -->
     <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
       <div class="modal-card">
-        <h2 class="modal-title">Register Cluster</h2>
+        <h2 class="modal-title">Register cluster</h2>
+        <p class="modal-subtitle">Create a cluster record before running onboarding in the target cluster.</p>
         <form class="modal-form" @submit.prevent="createCluster">
-          <div class="form-group"><label class="form-label">Name</label><input v-model="form.name" class="form-input" required /></div>
-          <div class="form-group"><label class="form-label">API Endpoint</label><input v-model="form.endpoint" class="form-input" required placeholder="https://k8s-api:6443" /></div>
+          <h3 class="modal-section-title">General</h3>
+          <div class="form-group"><label class="form-label">Name<span class="form-label-required" aria-hidden="true">*</span></label><input v-model="form.name" class="form-input" required /></div>
+          <div class="form-group"><label class="form-label">API endpoint<span class="form-label-required" aria-hidden="true">*</span></label><input v-model="form.endpoint" class="form-input" required placeholder="https://k8s-api:6443" /></div>
           <div class="form-group">
-            <label class="form-label">DevOps Status Namespace</label>
+            <label class="form-label">DevOps Status namespace</label>
             <input :value="form.default_namespace" class="form-input form-input--locked" readonly />
             <span class="form-hint">Agent and RBAC resources will be deployed in this namespace.</span>
           </div>
@@ -162,10 +216,25 @@
         </form>
       </div>
     </div>
+
+    <AdminDeleteConfirmDialog
+      v-model="deleteOpen"
+      :title="deleteForm.title"
+      :warning="deleteForm.warning"
+      :resource-kind="deleteForm.resourceKind"
+      :resource-name="deleteForm.resourceName"
+      :require-name-match="deleteForm.requireNameMatch"
+      :confirm-label="deleteForm.confirmLabel"
+      @confirm="onDeleteConfirm"
+      @cancel="onDeleteDialogCancel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
+import { ChevronRight, Plus } from 'lucide-vue-next'
+
 definePageMeta({ layout: 'admin' })
 const { apiFetch } = useApi()
 
@@ -175,6 +244,7 @@ const loadError = ref('')
 const loadErrorHint = ref('')
 const showCreate = ref(false)
 const onboardData = ref<any>(null)
+const onboardUiStep = ref(0)
 const copied = ref(false)
 
 const manualModalCluster = ref<any>(null)
@@ -187,11 +257,94 @@ type PingState = { loading?: boolean; ok?: boolean; message?: string; k8s_versio
 
 const pingById = ref<Record<string, PingState>>({})
 
+const deleteOpen = ref(false)
+const deleteForm = ref({
+  title: '',
+  warning: '',
+  resourceKind: 'resource',
+  resourceName: '',
+  requireNameMatch: true,
+  confirmLabel: 'Delete',
+})
+const deleteAction = ref<null | (() => Promise<void>)>(null)
+
+function onDeleteDialogCancel() {
+  deleteAction.value = null
+}
+
+async function onDeleteConfirm() {
+  const fn = deleteAction.value
+  if (!fn) {
+    deleteOpen.value = false
+    return
+  }
+  try {
+    await fn()
+    deleteOpen.value = false
+    deleteAction.value = null
+  } catch {
+    /* keep dialog open */
+  }
+}
+
+function requestRevokeCluster(c: { id: string; name: string }) {
+  deleteForm.value = {
+    title: 'Revoke cluster',
+    warning:
+      'Stored API tokens will be deactivated and the onboarding handshake invalidated. DevOps Status will stop calling your Kubernetes API. This does not remove RBAC or namespaces in your cluster.',
+    resourceKind: 'cluster',
+    resourceName: c.name,
+    requireNameMatch: true,
+    confirmLabel: 'Revoke cluster',
+  }
+  deleteAction.value = async () => {
+    await apiFetch(`/api/admin/k8s-clusters/${c.id}/revoke`, { method: 'POST' })
+    const next = { ...pingById.value }
+    delete next[c.id]
+    pingById.value = next
+    await load()
+  }
+  deleteOpen.value = true
+}
+
+function requestDeleteCluster(c: { id: string; name: string }) {
+  deleteForm.value = {
+    title: 'Delete cluster',
+    warning:
+      'This cluster record will be permanently removed from DevOps Status. Onboarding state and stored credentials for this record will be deleted. This action cannot be undone.',
+    resourceKind: 'cluster',
+    resourceName: c.name,
+    requireNameMatch: true,
+    confirmLabel: 'Delete cluster',
+  }
+  deleteAction.value = async () => {
+    await apiFetch(`/api/admin/k8s-clusters/${c.id}`, { method: 'DELETE' })
+    await load()
+  }
+  deleteOpen.value = true
+}
+
 const tunnelIsActive = computed(() => {
   if (!onboardData.value) return false
   const url: string = onboardData.value.external_url || ''
   return !!url && !url.includes('localhost') && !url.includes('127.0.0.1')
 })
+
+/** Step 2 shows kubectl command (prod or dev with reachable tunnel). */
+const onboardTwoSteps = computed(() => {
+  if (!onboardData.value) return false
+  return tunnelIsActive.value || !onboardData.value.is_dev
+})
+
+watch(onboardData, (v) => {
+  onboardUiStep.value = 0
+  if (v) copied.value = false
+})
+
+function closeOnboardModal() {
+  onboardData.value = null
+  onboardUiStep.value = 0
+}
 
 type PublicUrlKind = 'tunnel' | 'prod' | 'localhost'
 
@@ -381,17 +534,6 @@ async function submitManualModal() {
     manualSubmitting.value = false
   }
 }
-async function revoke(id: string) {
-  if (!confirm('Revoke this cluster? Stored API tokens will be deactivated and the handshake invalidated. DevOps Status will stop calling your Kubernetes API.')) return
-  await apiFetch(`/api/admin/k8s-clusters/${id}/revoke`, { method: 'POST' })
-  delete pingById.value[id]
-  await load()
-}
-async function deleteCluster(id: string) {
-  if (!confirm('Delete cluster?')) return
-  await apiFetch(`/api/admin/k8s-clusters/${id}`, { method: 'DELETE' })
-  await load()
-}
 async function boot() {
   await loadBackendMeta()
   await loadAndVerifyConnected()
@@ -400,10 +542,7 @@ onMounted(boot)
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.page-title { font-size: 1.5rem; font-weight: 700; }
-.page-hint { font-size: 0.8rem; color: var(--color-text-secondary); line-height: 1.5; margin-bottom: 20px; max-width: 960px; }
-.backend-url-card { border: 1px solid var(--color-border); border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; max-width: 960px; background: #f8fafc; }
+.backend-url-card { border: 1px solid var(--color-border-strong); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 20px; max-width: 960px; background: var(--color-bg); box-shadow: var(--shadow-card); }
 .backend-url-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
 .backend-url-label { font-size: 0.8rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.02em; }
 .backend-url-value { margin: 0 0 10px; font-size: 0.9rem; word-break: break-all; color: #0f172a; }
@@ -425,35 +564,14 @@ onMounted(boot)
 .ping-caption { margin: 8px 0 0; font-size: 0.72rem; color: #6b7280; line-height: 1.45; }
 .ping-code { font-size: 0.68rem; background: #f3f4f6; padding: 0 4px; border-radius: 3px; }
 .ping-na { color: var(--color-text-secondary); }
-.table-wrap { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); }
-.data-table th, .data-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--color-border); font-size: 0.9rem; }
-.data-table th { font-weight: 600; font-size: 0.8rem; color: var(--color-text-secondary); text-transform: uppercase; }
 .mono { font-family: monospace; font-size: 0.85rem; }
-.empty-row { color: var(--color-text-secondary); text-align: center; padding: 24px; }
 .status-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
 .badge--connected { background: #dcfce7; color: #166534; }
 .badge--connected_api_unverified { background: #ffedd5; color: #9a3412; }
 .badge--pending_registration { background: #fef3c7; color: #92400e; }
 .badge--revoked { background: #fef2f2; color: #991b1b; }
 .badge--degraded { background: #fef2f2; color: #991b1b; }
-.btn { padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 0.85rem; background: var(--color-bg); }
-.btn-primary { background: #1f2937; color: #fff; border-color: #1f2937; }
-.btn-danger { color: var(--color-red); border-color: var(--color-red); }
-.btn-success { color: #166534; border-color: #16a34a; background: #dcfce7; }
 .actions-cell { display: flex; gap: 4px; flex-wrap: wrap; }
-.btn-sm { padding: 4px 10px; font-size: 0.8rem; }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 200; }
-.modal-card { background: var(--color-bg); border-radius: var(--radius); padding: 28px; width: 100%; max-width: 480px; }
-.modal-card--wide { max-width: 700px; }
-.modal-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 20px; }
-.modal-form { display: flex; flex-direction: column; gap: 14px; }
-.form-group { display: flex; flex-direction: column; gap: 4px; }
-.form-label { font-size: 0.85rem; font-weight: 500; color: var(--color-text-secondary); }
-.form-input { padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 0.9rem; }
-.form-input--locked { background: #f3f4f6; color: #6b7280; cursor: not-allowed; }
-.form-hint { font-size: 0.75rem; color: #9ca3af; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .instructions { margin-bottom: 16px; padding-left: 20px; font-size: 0.9rem; }
 .instructions li { margin-bottom: 6px; }
 .command-block { margin-bottom: 16px; }
@@ -463,7 +581,6 @@ onMounted(boot)
 .help-note { font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 12px; line-height: 1.45; }
 .hint-cmd { font-size: 0.8rem; background: #f3f4f6; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; }
 .token-area { font-family: monospace; font-size: 0.8rem; resize: vertical; }
-.form-error { color: var(--color-red); font-size: 0.85rem; }
 .cred-yes { color: #166534; font-weight: 600; font-size: 0.85rem; }
 .cred-no { color: #b45309; font-weight: 600; font-size: 0.85rem; }
 .tunnel-status { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 16px; }

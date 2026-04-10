@@ -11,14 +11,19 @@ import (
 
 // MergeKubernetesProbeConfig fills token, endpoint, and namespace from registered cluster credentials
 // when config contains cluster_id and those fields are empty.
+// Applies to adapter kubernetes, and to adapter cli when execution_target is k8s_cluster.
 // If defaultInsecureSkipTLS is true and the config does not set insecure_skip_tls, it is set to true (private CA / dev clusters).
 func (s *Store) MergeKubernetesProbeConfig(ctx context.Context, adapter string, raw json.RawMessage, defaultInsecureSkipTLS bool) (json.RawMessage, error) {
-	if adapter != "kubernetes" {
-		return raw, nil
-	}
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return raw, err
+	}
+	if adapter == "cli" {
+		if et, _ := cfg["execution_target"].(string); et != "k8s_cluster" {
+			return raw, nil
+		}
+	} else if adapter != "kubernetes" {
+		return raw, nil
 	}
 	cid, _ := cfg["cluster_id"].(string)
 	if cid == "" {
