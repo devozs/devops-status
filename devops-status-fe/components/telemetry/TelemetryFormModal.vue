@@ -1,7 +1,12 @@
 <template>
   <div class="modal-overlay" @click.self="$emit('close')">
     <div class="modal-card modal-card--lg">
-      <h2 class="modal-title">{{ title }}</h2>
+      <div class="modal-card__header">
+        <h2 class="modal-title">{{ title }}</h2>
+        <button type="button" class="modal-card__close" aria-label="Close" @click="$emit('close')">
+          <X :size="20" :stroke-width="2" />
+        </button>
+      </div>
       <form class="modal-form" @submit.prevent="submit">
         <h3 class="modal-section-title">General</h3>
         <div class="form-group form-group--name">
@@ -42,22 +47,25 @@
         </div>
         <div class="form-group">
           <label class="form-label">Adapter</label>
-          <select v-model="adapter" class="form-input">
-            <option value="http">HTTP</option>
-            <option value="prometheus">Prometheus</option>
-            <option value="kubernetes">Kubernetes</option>
-            <option value="cli">CLI</option>
-          </select>
+          <AdminSegmentedRadioGroup
+            v-model="adapter"
+            name="telemetry-adapter"
+            aria-label="Telemetry adapter"
+            :options="adapterSegmentOptions"
+          />
         </div>
 
         <!-- HTTP -->
         <template v-if="adapter === 'http'">
           <div class="form-group">
             <label class="form-label">Source</label>
-            <select v-model="http.service_provider_id" class="form-input" required>
-              <option value="">Select TCP service provider…</option>
-              <option v-for="p in tcpProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <AdminSelect
+              v-model="http.service_provider_id"
+              required
+              aria-label="TCP service provider"
+              placeholder="Select TCP service provider…"
+              :options="tcpProviderSelectOptions"
+            />
           </div>
           <div class="form-group">
             <label class="form-label">Path</label>
@@ -66,9 +74,7 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Method</label>
-              <select v-model="http.method" class="form-input">
-                <option v-for="m in HTTP_METHODS" :key="m" :value="m">{{ m }}</option>
-              </select>
+              <AdminSelect v-model="http.method" aria-label="HTTP method" :options="httpMethodOptions" />
             </div>
             <div class="form-group">
               <label class="form-label">Expected status</label>
@@ -85,10 +91,13 @@
         <template v-else-if="adapter === 'prometheus'">
           <div class="form-group">
             <label class="form-label">Source</label>
-            <select v-model="prom.service_provider_id" class="form-input" required>
-              <option value="">Select Prometheus service provider…</option>
-              <option v-for="p in promProviders" :key="p.id" :value="p.id">{{ p.name }}</option>
-            </select>
+            <AdminSelect
+              v-model="prom.service_provider_id"
+              required
+              aria-label="Prometheus service provider"
+              placeholder="Select Prometheus service provider…"
+              :options="promProviderSelectOptions"
+            />
           </div>
           <p
             v-if="selectedPromProvider && selectedPromProvider.has_prometheus_credentials === false"
@@ -107,9 +116,7 @@
             </div>
             <div class="form-group">
               <label class="form-label">Operator</label>
-              <select v-model="prom.operator" class="form-input">
-                <option v-for="o in PROM_OPERATORS" :key="o" :value="o">{{ o }}</option>
-              </select>
+              <AdminSelect v-model="prom.operator" aria-label="Prometheus operator" :options="promOperatorOptions" />
             </div>
           </div>
         </template>
@@ -118,22 +125,20 @@
         <template v-else-if="adapter === 'kubernetes'">
           <div class="form-group">
             <label class="form-label">K8s version</label>
-            <select v-model="k8s.k8s_version" class="form-input" required>
-              <option v-for="v in K8S_VERSIONS" :key="v" :value="v">{{ v }}</option>
-            </select>
+            <AdminSelect v-model="k8s.k8s_version" required aria-label="Kubernetes version" :options="k8sVersionOptions" />
           </div>
           <div class="form-group">
             <label class="form-label">Cluster</label>
-            <select v-model="k8s.cluster_id" class="form-input">
-              <option value="">Select cluster…</option>
-              <option v-for="c in k8sFilteredClusters" :key="c.id" :value="c.id">{{ clusterLabel(c) }}</option>
-            </select>
+            <AdminSelect
+              v-model="k8s.cluster_id"
+              aria-label="Kubernetes cluster"
+              placeholder="Select cluster…"
+              :options="k8sClusterSelectOptions"
+            />
           </div>
           <div class="form-group">
             <label class="form-label">Check type</label>
-            <select v-model="k8s.check_type" class="form-input">
-              <option v-for="c in K8S_CHECK_TYPES" :key="c" :value="c">{{ c }}</option>
-            </select>
+            <AdminSelect v-model="k8s.check_type" aria-label="Kubernetes check type" :options="k8sCheckTypeOptions" />
           </div>
           <div v-if="k8s.check_type !== 'api_health' && k8s.check_type !== 'node_status'" class="form-group">
             <label class="form-label">Namespace</label>
@@ -153,10 +158,13 @@
         <template v-else-if="adapter === 'cli'">
           <div class="form-group">
             <label class="form-label">Execution</label>
-            <div class="radio-col">
-              <label><input v-model="cli.execution_target" type="radio" value="backend" /> Backend</label>
-              <label><input v-model="cli.execution_target" type="radio" value="k8s_cluster" /> Kubernetes Job</label>
-            </div>
+            <AdminRadioGroup
+              v-model="cli.execution_target"
+              name="cli-execution-target"
+              aria-label="CLI execution target"
+              direction="vertical"
+              :options="cliExecutionTargetOptions"
+            />
             <p class="hint">
               <strong>Backend</strong> runs the probe in a disposable Linux container via <code class="mono">docker run</code> (see server
               <code class="mono">CLI_BACKEND_EXECUTOR</code> / <code class="mono">CLI_DOCKER_NETWORK</code>), or as a Job on a
@@ -166,26 +174,23 @@
           </div>
           <div class="form-group">
             <label class="form-label">Runner image</label>
-            <select v-model="cli.runner" class="form-input">
-              <option v-for="p in CLI_RUNNER_PRESETS" :key="p" :value="p">
-                {{ p === 'alpine' ? 'Alpine (stable 3.x)' : 'Ubuntu 24.04' }}
-              </option>
-            </select>
+            <AdminSelect v-model="cli.runner" aria-label="CLI runner image" :options="cliRunnerOptions" />
             <p class="hint">Mapped on the server to <code class="mono">CLI_RUNNER_IMAGE_ALPINE</code> or <code class="mono">CLI_RUNNER_IMAGE_UBUNTU_24</code>.</p>
           </div>
           <template v-if="cli.execution_target === 'k8s_cluster'">
             <div class="form-group">
               <label class="form-label">K8s version</label>
-              <select v-model="cli.k8s_version" class="form-input" required>
-                <option v-for="v in K8S_VERSIONS" :key="v" :value="v">{{ v }}</option>
-              </select>
+              <AdminSelect v-model="cli.k8s_version" required aria-label="CLI Kubernetes version" :options="k8sVersionOptions" />
             </div>
             <div class="form-group">
               <label class="form-label">Cluster</label>
-              <select v-model="cli.cluster_id" class="form-input" required>
-                <option value="">Select cluster…</option>
-                <option v-for="c in cliFilteredClusters" :key="c.id" :value="c.id">{{ clusterLabel(c) }}</option>
-              </select>
+              <AdminSelect
+                v-model="cli.cluster_id"
+                required
+                aria-label="CLI Kubernetes cluster"
+                placeholder="Select cluster…"
+                :options="cliClusterSelectOptions"
+              />
             </div>
           </template>
           <div class="form-group">
@@ -250,10 +255,11 @@
             <h4 class="sub">QoS thresholds</h4>
             <div class="form-group">
               <label class="form-label">Value type</label>
-              <select v-model="cm.value_kind" class="form-input">
-                <option value="number">Numeric</option>
-                <option value="text">Text (trimmed stdout)</option>
-              </select>
+              <AdminSelect
+                v-model="cm.value_kind"
+                aria-label="Metric value type"
+                :options="[...metricValueKindOptions]"
+              />
             </div>
 
             <template v-if="cm.value_kind === 'number'">
@@ -263,9 +269,7 @@
               >
                 <div class="form-group">
                   <label>Green op</label>
-                  <select v-model="cm.green_operator" class="form-input">
-                    <option v-for="o in PROM_OPERATORS" :key="'cg'+o" :value="o">{{ o }}</option>
-                  </select>
+                  <AdminSelect v-model="cm.green_operator" aria-label="Green operator" :options="promOperatorOptions" />
                 </div>
                 <div class="form-group">
                   <label>Green value</label>
@@ -278,9 +282,7 @@
               >
                 <div class="form-group">
                   <label>Yellow op</label>
-                  <select v-model="cm.yellow_operator" class="form-input">
-                    <option v-for="o in PROM_OPERATORS" :key="'cy'+o" :value="o">{{ o }}</option>
-                  </select>
+                  <AdminSelect v-model="cm.yellow_operator" aria-label="Yellow operator" :options="promOperatorOptions" />
                 </div>
                 <div class="form-group">
                   <label>Yellow value</label>
@@ -302,9 +304,7 @@
               >
                 <div class="form-group">
                   <label>Green op</label>
-                  <select v-model="cm.green_operator" class="form-input">
-                    <option v-for="o in CLI_TEXT_OPERATORS" :key="'tg'+o" :value="o">{{ o }}</option>
-                  </select>
+                  <AdminSelect v-model="cm.green_operator" aria-label="Green text operator" :options="cliTextOperatorOptions" />
                 </div>
                 <div class="form-group">
                   <label>Green reference</label>
@@ -317,9 +317,7 @@
               >
                 <div class="form-group">
                   <label>Yellow op</label>
-                  <select v-model="cm.yellow_operator" class="form-input">
-                    <option v-for="o in CLI_TEXT_OPERATORS" :key="'ty'+o" :value="o">{{ o }}</option>
-                  </select>
+                  <AdminSelect v-model="cm.yellow_operator" aria-label="Yellow text operator" :options="cliTextOperatorOptions" />
                 </div>
                 <div class="form-group">
                   <label>Yellow reference</label>
@@ -395,7 +393,7 @@
             :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
           >
             <div class="form-group"><label>Green op</label>
-              <select v-model="pq.green_operator" class="form-input"><option v-for="o in PROM_OPERATORS" :key="'g'+o" :value="o">{{ o }}</option></select>
+              <AdminSelect v-model="pq.green_operator" aria-label="QoS green operator" :options="promOperatorOptions" />
             </div>
             <div class="form-group"><label>Green value</label><input v-model.number="pq.green_threshold" type="number" step="any" class="form-input" /></div>
           </div>
@@ -404,7 +402,7 @@
             :class="{ 'qos-band--blink': verifyBlinkTier === 'yellow' }"
           >
             <div class="form-group"><label>Yellow op</label>
-              <select v-model="pq.yellow_operator" class="form-input"><option v-for="o in PROM_OPERATORS" :key="'y'+o" :value="o">{{ o }}</option></select>
+              <AdminSelect v-model="pq.yellow_operator" aria-label="QoS yellow operator" :options="promOperatorOptions" />
             </div>
             <div class="form-group"><label>Yellow value</label><input v-model.number="pq.yellow_threshold" type="number" step="any" class="form-input" /></div>
           </div>
@@ -433,7 +431,7 @@
         <p v-if="saveBlockedHint" class="hint verify-hint">{{ saveBlockedHint }}</p>
 
         <div class="modal-actions">
-          <button type="button" class="btn" @click="$emit('close')">Cancel</button>
+          <button type="button" class="btn btn-modal-cancel" @click="$emit('close')">Cancel</button>
           <button
             type="submit"
             class="btn btn-save btn-pill"
@@ -449,6 +447,7 @@
 </template>
 
 <script setup lang="ts">
+import { X } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type {
   AdapterType,
@@ -487,6 +486,17 @@ const name = ref('')
 const displayName = ref('')
 const nameTrimmed = computed(() => name.value.trim())
 const adapter = ref<AdapterType>('http')
+const adapterSegmentOptions = [
+  { value: 'http', label: 'HTTP' },
+  { value: 'prometheus', label: 'Prometheus' },
+  { value: 'kubernetes', label: 'Kubernetes' },
+  { value: 'cli', label: 'CLI' },
+] as const satisfies readonly { value: AdapterType; label: string }[]
+
+const cliExecutionTargetOptions = [
+  { value: 'backend', label: 'Backend' },
+  { value: 'k8s_cluster', label: 'Kubernetes Job' },
+] as const satisfies readonly { value: ExecutionTarget; label: string }[]
 /** After verify: which QoS tier matched (for band highlight). */
 const verifyBlinkTier = ref<'' | 'green' | 'yellow' | 'red'>('')
 let verifyBlinkTimer: ReturnType<typeof setTimeout> | null = null
@@ -646,6 +656,29 @@ const promProviders = computed(() =>
   serviceProviders.value.filter((p) => p.provider_type === 'prometheus'),
 )
 
+const httpMethodOptions = computed(() => HTTP_METHODS.map((m) => ({ value: m, label: m })))
+const promOperatorOptions = computed(() => PROM_OPERATORS.map((o) => ({ value: o, label: o })))
+const cliTextOperatorOptions = computed(() => CLI_TEXT_OPERATORS.map((o) => ({ value: o, label: o })))
+const k8sVersionOptions = computed(() => K8S_VERSIONS.map((v) => ({ value: v, label: v })))
+const k8sCheckTypeOptions = computed(() => K8S_CHECK_TYPES.map((c) => ({ value: c, label: c })))
+const cliRunnerOptions = computed(() =>
+  CLI_RUNNER_PRESETS.map((p) => ({
+    value: p,
+    label: p === 'alpine' ? 'Alpine (stable 3.x)' : 'Ubuntu 24.04',
+  })),
+)
+const metricValueKindOptions = [
+  { value: 'number', label: 'Numeric' },
+  { value: 'text', label: 'Text (trimmed stdout)' },
+] as const
+
+const tcpProviderSelectOptions = computed(() =>
+  tcpProviders.value.map((p) => ({ value: p.id, label: p.name })),
+)
+const promProviderSelectOptions = computed(() =>
+  promProviders.value.map((p) => ({ value: p.id, label: p.name })),
+)
+
 const selectedPromProvider = computed(() =>
   promProviders.value.find((p) => p.id === prom.service_provider_id),
 )
@@ -684,6 +717,13 @@ function clusterLabel(c: TelemetryK8sClusterRow): string {
   if (n) return `${n} (${c.id.slice(0, 8)}…)`
   return c.id
 }
+
+const k8sClusterSelectOptions = computed(() =>
+  k8sFilteredClusters.value.map((c) => ({ value: c.id, label: clusterLabel(c) })),
+)
+const cliClusterSelectOptions = computed(() =>
+  cliFilteredClusters.value.map((c) => ({ value: c.id, label: clusterLabel(c) })),
+)
 
 const testPanelK8sVersion = computed(() => {
   if (adapter.value === 'kubernetes') return k8s.k8s_version
@@ -1238,7 +1278,6 @@ async function submit() {
 }
 .hint { font-size: 0.8rem; color: var(--color-text-secondary); margin: 0; }
 .sub { font-size: 0.9rem; margin: 8px 0 4px; font-weight: 600; }
-.radio-col { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; }
 .chk { font-size: 0.85rem; margin-top: 6px; }
 .verify-hint { margin-top: 4px; }
 .qos-band {

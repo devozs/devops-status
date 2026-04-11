@@ -172,7 +172,12 @@
 
     <div v-if="showCreate || editing" class="modal-overlay" @click.self="closeModal">
       <div class="modal-card modal-card--wide">
-        <h2 class="modal-title">{{ editing ? 'Edit environment' : 'Create environment' }}</h2>
+        <div class="modal-card__header">
+          <h2 class="modal-title">{{ editing ? 'Edit environment' : 'Create environment' }}</h2>
+          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+            <X :size="20" :stroke-width="2" />
+          </button>
+        </div>
         <p v-if="!editing" class="modal-subtitle">Set name and slug (slug must be unique), then save. You can attach a cluster and Kubernetes telemetry next.</p>
         <form class="modal-form" @submit.prevent="saveEnv">
           <h3 class="modal-section-title">General</h3>
@@ -220,34 +225,24 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Type</label>
-              <select v-model="form.env_type" class="form-input">
-                <option value="dev">Development</option>
-                <option value="staging">Staging</option>
-                <option value="prod">Production</option>
-                <option value="custom">Custom</option>
-              </select>
+              <AdminSelect v-model="form.env_type" aria-label="Environment type" :options="[...envTypeSelectOptions]" />
             </div>
             <div class="form-group">
               <label class="form-label">Criticality</label>
-              <select v-model="form.criticality" class="form-input">
-                <option value="low">Low</option>
-                <option value="standard">Standard</option>
-                <option value="critical">Critical</option>
-              </select>
+              <AdminSelect
+                v-model="form.criticality"
+                aria-label="Criticality"
+                :options="[...envCriticalitySelectOptions]"
+              />
             </div>
           </div>
           <div v-if="editing" class="form-group">
             <label class="form-label">Primary Kubernetes cluster</label>
-            <select v-model="form.k8s_cluster_id" class="form-input">
-              <option value="">None</option>
-              <option
-                v-for="c in clustersForEnv"
-                :key="c.id"
-                :value="c.id"
-              >
-                {{ c.name }} ({{ c.status }})
-              </option>
-            </select>
+            <AdminSelect
+              v-model="form.k8s_cluster_id"
+              aria-label="Primary Kubernetes cluster"
+              :options="envK8sClusterSelectOptions"
+            />
             <p class="form-hint">
               Connected clusters with API credentials. Unassigned clusters appear here; choosing one attaches it to this environment for probes. Used as the API target for Kubernetes telemetry below.
             </p>
@@ -288,10 +283,12 @@
               </tbody>
             </table>
             <div class="add-link-row">
-              <select v-model="newLink.telemetry_id" class="form-input">
-                <option value="">Add telemetry…</option>
-                <option v-for="t in k8sTelemetry" :key="t.id" :value="t.id">{{ t.name }}</option>
-              </select>
+              <AdminSelect
+                v-model="newLink.telemetry_id"
+                aria-label="Add telemetry"
+                placeholder="Add telemetry…"
+                :options="envTelemetrySelectOptions"
+              />
               <button type="button" class="btn btn-sm btn-primary" :disabled="!newLink.telemetry_id" @click="addEnvLink">Add</button>
             </div>
           </template>
@@ -299,7 +296,7 @@
           <p v-if="formError" class="field-error">{{ formError }}</p>
 
           <div class="modal-actions">
-            <button type="button" class="btn" @click="closeModal">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
             <button type="submit" class="btn btn-primary" :disabled="!canSaveGeneral || saving">
               {{ saving ? 'Saving…' : 'Save' }}
             </button>
@@ -312,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { Boxes, Plus } from 'lucide-vue-next'
+import { Boxes, Plus, X } from 'lucide-vue-next'
 import type { ResourceTopology } from '~/types/resource-topology'
 
 definePageMeta({ layout: 'admin' })
@@ -598,6 +595,25 @@ function resetSlugValidation() {
 }
 
 const k8sTelemetry = computed(() => allTelemetry.value.filter((d) => d.adapter === 'kubernetes'))
+
+const envTypeSelectOptions = [
+  { value: 'dev', label: 'Development' },
+  { value: 'staging', label: 'Staging' },
+  { value: 'prod', label: 'Production' },
+  { value: 'custom', label: 'Custom' },
+] as const
+const envCriticalitySelectOptions = [
+  { value: 'low', label: 'Low' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'critical', label: 'Critical' },
+] as const
+const envK8sClusterSelectOptions = computed(() => [
+  { value: '', label: 'None' },
+  ...clustersForEnv.value.map((c) => ({ value: c.id, label: `${c.name} (${c.status})` })),
+])
+const envTelemetrySelectOptions = computed(() =>
+  k8sTelemetry.value.map((t) => ({ value: t.id, label: t.name })),
+)
 
 function telemetryName(id: string) {
   const t = allTelemetry.value.find((d) => d.id === id)
@@ -990,7 +1006,7 @@ onMounted(async () => {
   line-height: 1.2;
 }
 .add-link-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.add-link-row .form-input { flex: 1; max-width: 320px; }
+.add-link-row :deep(.admin-select) { flex: 1; max-width: 320px; }
 .th-actions { white-space: nowrap; }
 .table-row-actions {
   display: flex;

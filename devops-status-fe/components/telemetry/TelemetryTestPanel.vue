@@ -6,10 +6,12 @@
     </p>
     <div v-if="requiresEnvironment" class="form-group">
       <label class="form-label">Environment</label>
-      <select v-model="environmentId" class="form-input">
-        <option value="">Select environment…</option>
-        <option v-for="e in filteredEnvs" :key="e.id" :value="e.id">{{ e.name }}</option>
-      </select>
+      <AdminSelect
+        v-model="environmentId"
+        aria-label="Environment"
+        placeholder="Select environment…"
+        :options="environmentSelectOptions"
+      />
     </div>
     <div class="actions">
       <button type="button" class="btn btn-sm" :disabled="!canVerify || busy" @click="onVerify">
@@ -190,6 +192,10 @@ const filteredEnvs = computed(() => {
   return props.environments.filter((e) => clusterEnv.has(e.id))
 })
 
+const environmentSelectOptions = computed(() =>
+  filteredEnvs.value.map((e) => ({ value: e.id, label: e.name })),
+)
+
 const canVerify = computed(() => (requiresEnvironment.value ? !!environmentId.value : true))
 
 watch(
@@ -233,10 +239,8 @@ defineExpose({
 <style scoped>
 .test-panel { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .subheading { font-size: 0.95rem; margin: 0 0 8px; font-weight: 600; }
-.form-group { margin-bottom: 8px; }
-.form-label { font-size: 0.85rem; font-weight: 500; color: var(--color-text-secondary); }
-.form-input { padding: 8px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); width: 100%; max-width: 400px; font-family: inherit; font-size: 0.9rem; }
-.form-input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-muted); }
+.form-group { margin-bottom: 8px; max-width: 400px; }
+.form-label { font-size: 0.85rem; font-weight: 500; color: var(--color-form-label); }
 .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .test-out { margin-top: 10px; padding: 10px; border-radius: 6px; font-size: 0.85rem; border: 1px solid transparent; }
 .test-out--ok { background: #dcfce7; color: #166534; border-color: rgba(34, 197, 94, 0.35); }

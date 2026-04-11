@@ -51,6 +51,17 @@
   --callout-warning-border: #fde68a;
   --callout-warning-text: #92400e;
 
+  /* Nebius-style form controls (shared public + admin) */
+  --nebius-input-bg: #f0f2f5;
+  --nebius-segment-bg: #ffffff;
+  --nebius-segment-selected-bg: #e8eaf6;
+  --nebius-segment-active-border: var(--color-primary);
+  --nebius-select-hover-bg: #e8eaf6;
+  --color-form-label: #224066;
+  --radius-control: 10px;
+  --radius-modal: 14px;
+  --shadow-select-panel: 0 8px 24px rgba(15, 23, 42, 0.12);
+
   --radius: 8px;
   --radius-sm: 6px;
   --radius-pill: 9999px;

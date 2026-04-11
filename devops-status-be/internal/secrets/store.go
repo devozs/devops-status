@@ -28,9 +28,15 @@ func NewStore(pool *pgxpool.Pool, hexKey string) (*Store, error) {
 
 // PrometheusCredentials is stored as JSON in a single secret row.
 type PrometheusCredentials struct {
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"`
-	BearerToken  string `json:"bearer_token,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Password    string `json:"password,omitempty"`
+	BearerToken string `json:"bearer_token,omitempty"`
+}
+
+// HTTPBasicCredentials is username/password JSON for service providers (Grafana, ES, Jenkins, Artifactory).
+type HTTPBasicCredentials struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 func (s *Store) Write(ctx context.Context, ownerType string, ownerID uuid.UUID, key string, plaintext []byte) error {
@@ -78,6 +84,13 @@ func (s *Store) DeleteAllForOwner(ctx context.Context, ownerType string, ownerID
 const OwnerTelemetry = "telemetry"
 const OwnerServiceProvider = "service_provider"
 const KeyPrometheusCreds = "prometheus_credentials"
+
+const (
+	KeyGrafanaCreds        = "grafana_credentials"
+	KeyElasticsearchCreds  = "elasticsearch_credentials"
+	KeyJenkinsCreds        = "jenkins_credentials"
+	KeyArtifactoryCreds    = "artifactory_credentials"
+)
 
 // WritePrometheusCredentials stores username/password or bearer as JSON.
 func (s *Store) WritePrometheusCredentials(ctx context.Context, telemetryID uuid.UUID, c PrometheusCredentials) error {
@@ -144,10 +157,15 @@ func (s *Store) ReadServiceProviderPrometheusCredentials(ctx context.Context, pr
 }
 
 func (s *Store) HasServiceProviderPrometheusCredentials(ctx context.Context, providerID uuid.UUID) (bool, error) {
+	return s.HasServiceProviderSecretKey(ctx, providerID, KeyPrometheusCreds)
+}
+
+// HasServiceProviderSecretKey reports whether a secret row exists for this provider and key.
+func (s *Store) HasServiceProviderSecretKey(ctx context.Context, providerID uuid.UUID, key string) (bool, error) {
 	var one int
 	err := s.pool.QueryRow(ctx,
 		`SELECT 1 FROM secrets WHERE owner_type=$1 AND owner_id=$2 AND key=$3 LIMIT 1`,
-		OwnerServiceProvider, providerID, KeyPrometheusCreds).Scan(&one)
+		OwnerServiceProvider, providerID, key).Scan(&one)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -155,4 +173,29 @@ func (s *Store) HasServiceProviderPrometheusCredentials(ctx context.Context, pro
 		return false, err
 	}
 	return true, nil
+}
+
+// WriteServiceProviderHTTPBasic stores basic auth for a service provider integration.
+func (s *Store) WriteServiceProviderHTTPBasic(ctx context.Context, providerID uuid.UUID, key string, c HTTPBasicCredentials) error {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return s.Write(ctx, OwnerServiceProvider, providerID, key, b)
+}
+
+// ReadServiceProviderHTTPBasic loads basic auth for verify/save merge.
+func (s *Store) ReadServiceProviderHTTPBasic(ctx context.Context, providerID uuid.UUID, key string) (HTTPBasicCredentials, error) {
+	var out HTTPBasicCredentials
+	b, err := s.Read(ctx, OwnerServiceProvider, providerID, key)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, nil
+		}
+		return out, err
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return out, err
+	}
+	return out, nil
 }

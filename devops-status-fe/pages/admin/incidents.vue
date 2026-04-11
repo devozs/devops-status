@@ -129,25 +129,29 @@
 
     <div v-if="editing" class="modal-overlay" @click.self="editing = null">
       <div class="modal-card">
-        <h2 class="modal-title">Update Incident</h2>
+        <div class="modal-card__header">
+          <h2 class="modal-title">Update Incident</h2>
+          <button type="button" class="modal-card__close" aria-label="Close" @click="editing = null">
+            <X :size="20" :stroke-width="2" />
+          </button>
+        </div>
         <p class="modal-subtitle">Change status and add a public message for the status page.</p>
         <form class="modal-form" @submit.prevent="submitUpdate">
           <h3 class="modal-section-title">Details</h3>
           <div class="form-group">
             <label class="form-label">Status</label>
-            <select v-model="updateForm.status" class="form-input">
-              <option value="investigating">Investigating</option>
-              <option value="identified">Identified</option>
-              <option value="monitoring">Monitoring</option>
-              <option value="resolved">Resolved</option>
-            </select>
+            <AdminSelect
+              v-model="updateForm.status"
+              aria-label="Incident status"
+              :options="[...incidentStatusSelectOptions]"
+            />
           </div>
           <div class="form-group">
             <label class="form-label">Message</label>
             <textarea v-model="updateForm.message" class="form-input form-input--multiline" rows="3" />
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn" @click="editing = null">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="editing = null">Cancel</button>
             <button type="submit" class="btn btn-primary btn-pill">Submit</button>
           </div>
         </form>
@@ -157,6 +161,7 @@
 </template>
 
 <script setup lang="ts">
+import { X } from 'lucide-vue-next'
 import type { AdminIncidentDetailResponse, AdminIncidentListItem, IncidentDegradation, IncidentUpdate } from '~/types/admin-incidents'
 
 definePageMeta({ layout: 'admin' })
@@ -165,6 +170,13 @@ const { apiFetch } = useApi()
 const incidents = ref<AdminIncidentListItem[]>([])
 const editing = ref<AdminIncidentListItem | null>(null)
 const updateForm = ref({ status: '', message: '' })
+
+const incidentStatusSelectOptions = [
+  { value: 'investigating', label: 'Investigating' },
+  { value: 'identified', label: 'Identified' },
+  { value: 'monitoring', label: 'Monitoring' },
+  { value: 'resolved', label: 'Resolved' },
+] as const
 
 const detail = ref<{ incident: AdminIncidentListItem; updates: IncidentUpdate[] } | null>(null)
 

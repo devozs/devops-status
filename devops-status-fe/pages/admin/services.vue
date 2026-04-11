@@ -168,7 +168,12 @@
 
     <div v-if="showCreate || editing" class="modal-overlay" @click.self="closeModal">
       <div class="modal-card modal-card--wide">
-        <h2 class="modal-title">{{ editing ? 'Edit service' : 'Create service' }}</h2>
+        <div class="modal-card__header">
+          <h2 class="modal-title">{{ editing ? 'Edit service' : 'Create service' }}</h2>
+          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+            <X :size="20" :stroke-width="2" />
+          </button>
+        </div>
         <p v-if="!editing" class="modal-subtitle">
           Set name and slug (slug must be unique), then save. You can attach HTTP, Prometheus, or CLI telemetry next.
         </p>
@@ -218,11 +223,11 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Criticality</label>
-              <select v-model="form.criticality" class="form-input">
-                <option value="low">Low</option>
-                <option value="standard">Standard</option>
-                <option value="critical">Critical</option>
-              </select>
+              <AdminSelect
+                v-model="form.criticality"
+                aria-label="Criticality"
+                :options="[...criticalitySelectOptions]"
+              />
             </div>
             <div class="form-group">
               <label class="form-label">
@@ -232,10 +237,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">Service provider (host / port)</label>
-            <select v-model="form.service_provider_id" class="form-input">
-              <option value="">None</option>
-              <option v-for="p in providers" :key="p.id" :value="p.id">{{ providerLabel(p) }}</option>
-            </select>
+            <AdminSelect v-model="form.service_provider_id" aria-label="Service provider" :options="serviceProviderSelectOptions" />
             <p class="form-hint">
               <NuxtLink to="/admin/service-providers">Manage service providers</NuxtLink>
             </p>
@@ -271,10 +273,12 @@
               </tbody>
             </table>
             <div class="add-link-row">
-              <select v-model="newLink.telemetry_id" class="form-input">
-                <option value="">Add telemetry…</option>
-                <option v-for="t in serviceTelemetry" :key="t.id" :value="t.id">{{ t.name }} ({{ t.adapter }})</option>
-              </select>
+              <AdminSelect
+                v-model="newLink.telemetry_id"
+                aria-label="Add telemetry"
+                placeholder="Add telemetry…"
+                :options="serviceTelemetrySelectOptions"
+              />
               <button type="button" class="btn btn-sm btn-primary" :disabled="!newLink.telemetry_id" @click="addSvcLink">Add</button>
             </div>
           </template>
@@ -282,7 +286,7 @@
           <p v-if="formError" class="field-error">{{ formError }}</p>
 
           <div class="modal-actions">
-            <button type="button" class="btn" @click="closeModal">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
             <button type="submit" class="btn btn-primary" :disabled="!canSaveGeneral || saving">
               {{ saving ? 'Saving…' : 'Save' }}
             </button>
@@ -294,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { Cpu, Plus } from 'lucide-vue-next'
+import { Cpu, Plus, X } from 'lucide-vue-next'
 import type { ResourceTopology } from '~/types/resource-topology'
 
 definePageMeta({ layout: 'admin' })
@@ -343,8 +347,8 @@ type Provider = {
   host: string
   port: number
   image_url?: string
-  provider_type?: 'tcp' | 'prometheus'
-  config_json?: { endpoint?: string }
+  provider_type?: string
+  config_json?: Record<string, unknown>
 }
 
 const services = ref<SvcRow[]>([])
@@ -558,11 +562,25 @@ const serviceTelemetry = computed(() =>
 function providerLabel(p: Provider) {
   const n = p.name.trim()
   if (p.provider_type === 'prometheus') {
-    const ep = (p.config_json?.endpoint || '').trim()
+    const ep = String((p.config_json as { endpoint?: unknown } | undefined)?.endpoint ?? '').trim()
     return ep ? `${n} — ${ep}` : `${n} — Prometheus`
   }
   return `${n} — ${p.host}:${p.port}`
 }
+
+const criticalitySelectOptions = [
+  { value: 'low', label: 'Low' },
+  { value: 'standard', label: 'Standard' },
+  { value: 'critical', label: 'Critical' },
+] as const
+
+const serviceProviderSelectOptions = computed(() => [
+  { value: '', label: 'None' },
+  ...providers.value.map((p) => ({ value: p.id, label: providerLabel(p) })),
+])
+const serviceTelemetrySelectOptions = computed(() =>
+  serviceTelemetry.value.map((t) => ({ value: t.id, label: `${t.name} (${t.adapter})` })),
+)
 
 function telemetryName(id: string) {
   const t = allTelemetry.value.find((d) => d.id === id)
@@ -924,7 +942,7 @@ onMounted(async () => {
   line-height: 1.2;
 }
 .add-link-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
-.add-link-row .form-input { flex: 1; max-width: 360px; }
+.add-link-row :deep(.admin-select) { flex: 1; max-width: 360px; }
 .form-group--slug .slug-field-row {
   display: flex;
   align-items: center;

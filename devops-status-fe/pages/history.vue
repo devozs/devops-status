@@ -25,20 +25,18 @@
 
     <div class="controls-row">
       <div class="controls-left">
-        <select v-model="targetFilter" class="filter-select" aria-label="Filter by target type">
-          <option value="">All</option>
-          <option value="service">Services</option>
-          <option value="environment">Environments</option>
-        </select>
-        <select v-model="componentSlug" class="filter-select" aria-label="Filter by component">
-          <option value="">All components</option>
-          <optgroup v-if="showServiceComponentOptions" label="Services">
-            <option v-for="s in services" :key="s.slug" :value="'service:' + s.slug">{{ s.name }}</option>
-          </optgroup>
-          <optgroup v-if="showEnvironmentComponentOptions" label="Environments">
-            <option v-for="e in environments" :key="e.slug" :value="'environment:' + e.slug">{{ e.name }}</option>
-          </optgroup>
-        </select>
+        <AdminSelect
+          v-model="targetFilter"
+          aria-label="Filter by target type"
+          :options="historyTargetFilterOptions"
+        />
+        <AdminSelect
+          v-model="componentSlug"
+          aria-label="Filter by component"
+          empty-option-label="All components"
+          placeholder="All components"
+          :groups="historyComponentFilterGroups"
+        />
       </div>
       <div class="controls-right">
         <button type="button" class="nav-btn" aria-label="Previous period" @click="shiftMonths(-3)">
@@ -256,6 +254,35 @@ const showServiceComponentOptions = computed(
 const showEnvironmentComponentOptions = computed(
   () => !targetFilter.value || targetFilter.value === 'environment',
 )
+
+const historyTargetFilterOptions = [
+  { value: '', label: 'All' },
+  { value: 'service', label: 'Services' },
+  { value: 'environment', label: 'Environments' },
+] as const
+
+const historyComponentFilterGroups = computed(() => {
+  const g: { label: string; options: { value: string; label: string }[] }[] = []
+  if (showServiceComponentOptions.value && (services.value?.length ?? 0) > 0) {
+    g.push({
+      label: 'Services',
+      options: (services.value ?? []).map((s: { slug: string; name: string }) => ({
+        value: `service:${s.slug}`,
+        label: s.name,
+      })),
+    })
+  }
+  if (showEnvironmentComponentOptions.value && (environments.value?.length ?? 0) > 0) {
+    g.push({
+      label: 'Environments',
+      options: (environments.value ?? []).map((e: { slug: string; name: string }) => ({
+        value: `environment:${e.slug}`,
+        label: e.name,
+      })),
+    })
+  }
+  return g
+})
 
 watch(targetFilter, (tf) => {
   if (!componentSlug.value) return
@@ -804,20 +831,9 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.filter-select {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
-  font-family: inherit;
-  background: var(--color-bg);
-  color: var(--color-text);
+.controls-left :deep(.admin-select) {
   min-width: 160px;
-}
-.filter-select:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-muted);
+  max-width: min(320px, 100%);
 }
 
 .muted {

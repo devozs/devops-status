@@ -40,12 +40,17 @@
                         @error="onRowImageError(p.id)"
                       />
                       <Activity v-else-if="p.provider_type === 'prometheus'" :size="16" :stroke-width="2" />
+                      <Globe v-else-if="p.provider_type === 'grafana'" :size="16" :stroke-width="2" />
+                      <Database v-else-if="p.provider_type === 'elasticsearch'" :size="16" :stroke-width="2" />
+                      <Wrench v-else-if="p.provider_type === 'jenkins'" :size="16" :stroke-width="2" />
+                      <Package v-else-if="p.provider_type === 'artifactory'" :size="16" :stroke-width="2" />
+                      <Search v-else-if="p.provider_type === 'dns'" :size="16" :stroke-width="2" />
                       <Share2 v-else :size="16" :stroke-width="2" />
                     </div>
                     <div class="table-resource-body">
                       <span class="table-resource-title">{{ p.name }}</span>
                       <span class="table-resource-meta">
-                        <span class="type-pill">{{ p.provider_type === 'prometheus' ? 'Prometheus' : 'TCP' }}</span>
+                        <span class="type-pill">{{ providerTypeLabel(p.provider_type) }}</span>
                         {{ providerMetaLine(p) }}
                       </span>
                     </div>
@@ -77,16 +82,24 @@
 
     <div v-if="modal" class="modal-overlay" @click.self="closeModal">
       <div class="modal-card modal-card--lg">
-        <h2 class="modal-title">{{ editingId ? 'Edit provider' : 'New provider' }}</h2>
+        <div class="modal-card__header">
+          <h2 class="modal-title">{{ editingId ? 'Edit provider' : 'New provider' }}</h2>
+          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+            <X :size="20" :stroke-width="2" />
+          </button>
+        </div>
         <p v-if="!editingId" class="modal-subtitle">Verify before saving. Name must be unique (case-insensitive).</p>
         <form class="modal-form" @submit.prevent="save">
           <h3 class="modal-section-title">General</h3>
           <div class="form-group">
             <label class="form-label">Provider type<span class="form-label-required" aria-hidden="true">*</span></label>
-            <select v-model="form.provider_type" class="form-input" @change="onTypeChange">
-              <option value="tcp">TCP (host and port)</option>
-              <option value="prometheus">Prometheus</option>
-            </select>
+            <AdminSegmentedRadioGroup
+              v-model="form.provider_type"
+              name="provider-type"
+              aria-label="Provider type"
+              :options="providerOptions"
+              @update:model-value="onTypeChange"
+            />
           </div>
           <div class="form-group form-group--name">
             <label class="form-label">Name<span class="form-label-required" aria-hidden="true">*</span></label>
@@ -142,29 +155,26 @@
           </div>
 
           <template v-if="form.provider_type === 'tcp'">
+            <h4 class="sub">{{ providerTypeLabel('tcp') }}</h4>
             <div class="form-group">
               <label class="form-label">Host<span class="form-label-required" aria-hidden="true">*</span></label>
-              <input v-model="form.host" class="form-input" :required="form.provider_type === 'tcp'" />
+              <input v-model="form.host" class="form-input" required />
             </div>
             <div class="form-group">
               <label class="form-label">Port<span class="form-label-required" aria-hidden="true">*</span></label>
-              <input v-model.number="form.port" type="number" class="form-input" min="1" max="65535" :required="form.provider_type === 'tcp'" />
+              <input v-model.number="form.port" type="number" class="form-input" min="1" max="65535" required />
             </div>
           </template>
 
-          <template v-else>
-            <h4 class="sub">Prometheus</h4>
+          <template v-else-if="form.provider_type === 'prometheus'">
+            <h4 class="sub">{{ providerTypeLabel('prometheus') }}</h4>
             <div class="form-group">
               <label class="form-label">Endpoint<span class="form-label-required" aria-hidden="true">*</span></label>
               <input v-model="form.prom_endpoint" class="form-input" placeholder="https://prometheus.example.com:9090" />
             </div>
             <div class="form-group">
               <label class="form-label">Auth</label>
-              <select v-model="form.prom_auth" class="form-input">
-                <option value="none">None</option>
-                <option value="basic">Basic</option>
-                <option value="bearer">Bearer</option>
-              </select>
+              <AdminSelect v-model="form.prom_auth" aria-label="Prometheus auth" :options="promAuthSelectOptions" />
             </div>
             <template v-if="form.prom_auth === 'basic'">
               <div class="form-group"><label class="form-label">Username</label><input v-model="credUser" class="form-input" autocomplete="off" /></div>
@@ -173,14 +183,101 @@
             <template v-if="form.prom_auth === 'bearer'">
               <div class="form-group"><label class="form-label">Token</label><input v-model="credBearer" type="password" class="form-input" autocomplete="new-password" /></div>
             </template>
-            <p v-if="editingId && hasStoredPrometheusCreds" class="hint">
-              Credentials are stored. Enter new values here to replace them, or leave blank and verify still uses stored credentials when you pass the saved provider id.
-            </p>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
+          <template v-else-if="form.provider_type === 'grafana'">
+            <h4 class="sub">{{ providerTypeLabel('grafana') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Base URL<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.grafana_base_url" class="form-input" placeholder="https://grafana.example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Auth</label>
+              <AdminSelect v-model="form.grafana_auth" aria-label="Grafana auth" :options="basicAuthSelectOptions" />
+            </div>
+            <template v-if="form.grafana_auth === 'basic'">
+              <div class="form-group"><label class="form-label">Username</label><input v-model="credUser" class="form-input" autocomplete="off" /></div>
+              <div class="form-group"><label class="form-label">Password</label><input v-model="credPass" type="password" class="form-input" autocomplete="new-password" /></div>
+            </template>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
+          <template v-else-if="form.provider_type === 'elasticsearch'">
+            <h4 class="sub">{{ providerTypeLabel('elasticsearch') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Cluster URL<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.es_url" class="form-input" placeholder="https://elastic.example.com:9243" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Auth</label>
+              <AdminSelect v-model="form.es_auth" aria-label="Elasticsearch auth" :options="basicAuthSelectOptions" />
+            </div>
+            <template v-if="form.es_auth === 'basic'">
+              <div class="form-group"><label class="form-label">Username</label><input v-model="credUser" class="form-input" autocomplete="off" /></div>
+              <div class="form-group"><label class="form-label">Password</label><input v-model="credPass" type="password" class="form-input" autocomplete="new-password" /></div>
+            </template>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
+          <template v-else-if="form.provider_type === 'jenkins'">
+            <h4 class="sub">{{ providerTypeLabel('jenkins') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Jenkins URL<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.jenkins_url" class="form-input" placeholder="https://jenkins.example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Auth</label>
+              <AdminSelect v-model="form.jenkins_auth" aria-label="Jenkins auth" :options="jenkinsAuthSelectOptions" />
+            </div>
+            <template v-if="form.jenkins_auth === 'basic'">
+              <div class="form-group"><label class="form-label">Username</label><input v-model="credUser" class="form-input" autocomplete="off" /></div>
+              <div class="form-group">
+                <label class="form-label">Password or API token</label>
+                <input v-model="credPass" type="password" class="form-input" autocomplete="new-password" />
+              </div>
+            </template>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
+          <template v-else-if="form.provider_type === 'artifactory'">
+            <h4 class="sub">{{ providerTypeLabel('artifactory') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Base URL<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.artifactory_base_url" class="form-input" placeholder="https://artifactory.example.com or …/artifactory" />
+            </div>
+            <p class="hint">Must resolve <code class="inline-code">/api/system/ping</code> on this base (add <code class="inline-code">/artifactory</code> to the path if needed).</p>
+            <div class="form-group">
+              <label class="form-label">Auth</label>
+              <AdminSelect v-model="form.artifactory_auth" aria-label="Artifactory auth" :options="basicAuthSelectOptions" />
+            </div>
+            <template v-if="form.artifactory_auth === 'basic'">
+              <div class="form-group"><label class="form-label">Username</label><input v-model="credUser" class="form-input" autocomplete="off" /></div>
+              <div class="form-group"><label class="form-label">Password</label><input v-model="credPass" type="password" class="form-input" autocomplete="new-password" /></div>
+            </template>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
+          <template v-else-if="form.provider_type === 'dns'">
+            <h4 class="sub">{{ providerTypeLabel('dns') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Hostname<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.dns_hostname" class="form-input" placeholder="example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Record type<span class="form-label-required" aria-hidden="true">*</span></label>
+              <AdminSelect v-model="form.dns_record_type" aria-label="DNS record type" :options="dnsRecordTypeOptions" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nameserver (optional)</label>
+              <input v-model="form.dns_nameserver" class="form-input" placeholder="8.8.8.8 or ns.example.com" />
+            </div>
+            <p class="hint">Leave nameserver empty to use the host resolver; otherwise queries that server on UDP port 53.</p>
           </template>
 
           <div v-if="verifyResult" class="verify-out" :class="verifyResult.ok ? 'verify-out--ok' : 'verify-out--fail'">
             <template v-if="verifyResult.ok">
-              <strong>{{ form.provider_type === 'prometheus' ? 'Prometheus OK' : 'Reachable' }}</strong>
+              <strong>{{ verifyOkLabel }}</strong>
               <span v-if="verifyResult.latency_ms != null"> · {{ verifyResult.latency_ms }}ms</span>
             </template>
             <template v-else>
@@ -198,7 +295,7 @@
               </button>
             </div>
             <div class="modal-actions-right">
-              <button type="button" class="btn" @click="closeModal">Cancel</button>
+              <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
               <button type="submit" class="btn btn-primary" :disabled="saving || !canSave">Save</button>
             </div>
           </div>
@@ -209,12 +306,64 @@
 </template>
 
 <script setup lang="ts">
-import { Activity, Plus, Share2 } from 'lucide-vue-next'
+import { Activity, Database, Globe, Package, Plus, Search, Share2, Wrench, X } from 'lucide-vue-next'
 
 definePageMeta({ layout: 'admin' })
 const { apiFetch } = useApi()
 
-type ProviderType = 'tcp' | 'prometheus'
+type ProviderType =
+  | 'tcp'
+  | 'prometheus'
+  | 'grafana'
+  | 'elasticsearch'
+  | 'jenkins'
+  | 'artifactory'
+  | 'dns'
+
+const PROVIDER_TYPES: ProviderType[] = [
+  'tcp',
+  'prometheus',
+  'grafana',
+  'elasticsearch',
+  'jenkins',
+  'artifactory',
+  'dns',
+]
+
+const providerOptions: { value: ProviderType; label: string }[] = [
+  { value: 'tcp', label: 'TCP' },
+  { value: 'prometheus', label: 'Prometheus' },
+  { value: 'grafana', label: 'Grafana' },
+  { value: 'elasticsearch', label: 'Elasticsearch' },
+  { value: 'jenkins', label: 'Jenkins' },
+  { value: 'artifactory', label: 'Artifactory' },
+  { value: 'dns', label: 'DNS checker' },
+]
+
+const promAuthSelectOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'basic', label: 'Basic' },
+  { value: 'bearer', label: 'Bearer' },
+]
+const basicAuthSelectOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'basic', label: 'Basic' },
+]
+const jenkinsAuthSelectOptions = [
+  { value: 'none', label: 'None (anonymous read)' },
+  { value: 'basic', label: 'Basic' },
+]
+const dnsRecordTypeOptions = [
+  { value: 'a', label: 'A' },
+  { value: 'aaaa', label: 'AAAA' },
+  { value: 'cname', label: 'CNAME' },
+  { value: 'txt', label: 'TXT' },
+]
+
+function providerTypeLabel(pt: string | undefined): string {
+  const o = providerOptions.find((x) => x.value === pt)
+  return o?.label ?? String(pt ?? '')
+}
 
 type Row = {
   id: string
@@ -222,8 +371,9 @@ type Row = {
   host: string
   port: number
   image_url?: string
-  provider_type?: ProviderType
-  config_json?: { endpoint?: string; auth_method?: string }
+  provider_type?: string
+  config_json?: Record<string, unknown>
+  has_stored_credentials?: boolean
   has_prometheus_credentials?: boolean
 }
 
@@ -275,18 +425,57 @@ function requestRemoveProvider(p: Row) {
   }
   deleteOpen.value = true
 }
+
+type HttpAuth = 'none' | 'basic'
+
+type FormState = {
+  provider_type: ProviderType
+  name: string
+  host: string
+  port: number
+  image_url: string
+  prom_endpoint: string
+  prom_auth: 'none' | 'basic' | 'bearer'
+  grafana_base_url: string
+  grafana_auth: HttpAuth
+  es_url: string
+  es_auth: HttpAuth
+  jenkins_url: string
+  jenkins_auth: HttpAuth
+  artifactory_base_url: string
+  artifactory_auth: HttpAuth
+  dns_hostname: string
+  dns_record_type: 'a' | 'aaaa' | 'cname' | 'txt'
+  dns_nameserver: string
+}
+
+function emptyForm(): FormState {
+  return {
+    provider_type: 'tcp',
+    name: '',
+    host: '',
+    port: 443,
+    image_url: '',
+    prom_endpoint: '',
+    prom_auth: 'none',
+    grafana_base_url: '',
+    grafana_auth: 'none',
+    es_url: '',
+    es_auth: 'none',
+    jenkins_url: '',
+    jenkins_auth: 'none',
+    artifactory_base_url: '',
+    artifactory_auth: 'none',
+    dns_hostname: '',
+    dns_record_type: 'a',
+    dns_nameserver: '',
+  }
+}
+
 const modal = ref(false)
 const editingId = ref<string | null>(null)
-const hasStoredPrometheusCreds = ref(false)
-const form = ref({
-  provider_type: 'tcp' as ProviderType,
-  name: '',
-  host: '',
-  port: 443,
-  image_url: '',
-  prom_endpoint: '',
-  prom_auth: 'none' as 'none' | 'basic' | 'bearer',
-})
+const hasStoredCreds = ref(false)
+const form = ref<FormState>(emptyForm())
 const credUser = ref('')
 const credPass = ref('')
 const credBearer = ref('')
@@ -297,6 +486,9 @@ const verifyResult = ref<{ ok: boolean; error?: string; latency_ms?: number } | 
 const lastVerifyFingerprint = ref<string | null>(null)
 const rowImageFailed = reactive<Record<string, boolean>>({})
 const imagePreviewBroken = ref(false)
+
+const storedCredsHint =
+  'Credentials are stored. Enter new values here to replace them, or leave blank and verify still uses stored credentials when you pass the saved provider id.'
 
 const nameTrimmed = computed(() => form.value.name.trim())
 const imageUrlTrimmed = computed(() => form.value.image_url.trim())
@@ -313,34 +505,98 @@ const nameFieldClass = computed(() => {
   return ''
 })
 
+const verifyOkLabel = computed(() => {
+  const pt = form.value.provider_type
+  if (pt === 'tcp') return 'Reachable'
+  if (pt === 'dns') return 'DNS OK'
+  return `${providerTypeLabel(pt)} OK`
+})
+
+function rowProviderType(p: Row): ProviderType {
+  const t = (p.provider_type || 'tcp').toLowerCase()
+  return (PROVIDER_TYPES.includes(t as ProviderType) ? t : 'tcp') as ProviderType
+}
+
 function providerMetaLine(p: Row) {
-  const t = p.provider_type === 'prometheus' ? 'prometheus' : 'tcp'
-  if (t === 'prometheus') {
-    const ep = (p.config_json?.endpoint || '').trim()
-    return ep || '—'
+  const cfg = p.config_json || {}
+  const pt = rowProviderType(p)
+  switch (pt) {
+    case 'tcp':
+      return `${p.host}:${p.port}`
+    case 'prometheus':
+      return String(cfg.endpoint || '').trim() || '—'
+    case 'grafana':
+    case 'artifactory':
+      return String(cfg.base_url || '').trim() || '—'
+    case 'elasticsearch':
+    case 'jenkins':
+      return String(cfg.url || '').trim() || '—'
+    case 'dns': {
+      const h = String(cfg.hostname || '').trim()
+      const rt = String(cfg.record_type || 'a').trim()
+      return h ? `${h} (${rt.toUpperCase()})` : '—'
+    }
+    default:
+      return '—'
   }
-  return `${p.host}:${p.port}`
+}
+
+function isHttpsURL(s: string): boolean {
+  const u = s.trim()
+  if (!u) return false
+  return /^https?:\/\//i.test(u)
 }
 
 function verifyFingerprint(): string {
-  if (form.value.provider_type === 'tcp') {
-    return JSON.stringify({
-      provider_type: 'tcp',
-      host: form.value.host.trim(),
-      port: Number(form.value.port),
-    })
+  const f = form.value
+  const pt = f.provider_type
+  switch (pt) {
+    case 'tcp':
+      return JSON.stringify({
+        provider_type: 'tcp',
+        host: f.host.trim(),
+        port: Number(f.port),
+      })
+    case 'prometheus':
+      return JSON.stringify({
+        provider_type: 'prometheus',
+        endpoint: f.prom_endpoint.trim(),
+        auth_method: f.prom_auth,
+      })
+    case 'grafana':
+      return JSON.stringify({
+        provider_type: 'grafana',
+        base_url: f.grafana_base_url.trim(),
+        auth_method: f.grafana_auth,
+      })
+    case 'elasticsearch':
+      return JSON.stringify({
+        provider_type: 'elasticsearch',
+        url: f.es_url.trim(),
+        auth_method: f.es_auth,
+      })
+    case 'jenkins':
+      return JSON.stringify({
+        provider_type: 'jenkins',
+        url: f.jenkins_url.trim(),
+        auth_method: f.jenkins_auth,
+      })
+    case 'artifactory':
+      return JSON.stringify({
+        provider_type: 'artifactory',
+        base_url: f.artifactory_base_url.trim(),
+        auth_method: f.artifactory_auth,
+      })
+    case 'dns':
+      return JSON.stringify({
+        provider_type: 'dns',
+        dns_hostname: f.dns_hostname.trim(),
+        dns_record_type: f.dns_record_type,
+        dns_nameserver: f.dns_nameserver.trim(),
+      })
+    default:
+      return ''
   }
-  return JSON.stringify({
-    provider_type: 'prometheus',
-    endpoint: form.value.prom_endpoint.trim(),
-    auth_method: form.value.prom_auth,
-  })
-}
-
-function promEndpointValid(): boolean {
-  const u = form.value.prom_endpoint.trim()
-  if (!u) return false
-  return /^https?:\/\//i.test(u)
 }
 
 function validateLocal(): string {
@@ -354,23 +610,75 @@ function validateLocal(): string {
   const img = imageUrlTrimmed.value
   if (img && !/^https?:\/\//i.test(img)) return 'Image URL must start with http:// or https://'
 
-  if (form.value.provider_type === 'tcp') {
-    const h = form.value.host.trim()
-    if (!h) return 'Host is required'
-    const port = Number(form.value.port)
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return 'Port must be between 1 and 65535'
-  } else {
-    if (!promEndpointValid()) return 'Prometheus endpoint must be a valid http(s) URL'
-    if (form.value.prom_auth === 'basic') {
-      const needCreds = !editingId.value || !hasStoredPrometheusCreds.value
-      if (needCreds && (!credUser.value.trim() || !credPass.value)) {
-        return 'Basic auth requires username and password for new providers'
+  const f = form.value
+  switch (f.provider_type) {
+    case 'tcp': {
+      const h = f.host.trim()
+      if (!h) return 'Host is required'
+      const port = Number(f.port)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return 'Port must be between 1 and 65535'
+      break
+    }
+    case 'prometheus': {
+      if (!isHttpsURL(f.prom_endpoint)) return 'Prometheus endpoint must be a valid http(s) URL'
+      if (f.prom_auth === 'basic') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && (!credUser.value.trim() || !credPass.value)) {
+          return 'Basic auth requires username and password for new providers'
+        }
       }
+      if (f.prom_auth === 'bearer') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && !credBearer.value.trim()) return 'Bearer auth requires a token for new providers'
+      }
+      break
     }
-    if (form.value.prom_auth === 'bearer') {
-      const needCreds = !editingId.value || !hasStoredPrometheusCreds.value
-      if (needCreds && !credBearer.value.trim()) return 'Bearer auth requires a token for new providers'
+    case 'grafana': {
+      if (!isHttpsURL(f.grafana_base_url)) return 'Grafana base URL must be a valid http(s) URL'
+      if (f.grafana_auth === 'basic') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && (!credUser.value.trim() || !credPass.value)) {
+          return 'Basic auth requires username and password for new providers'
+        }
+      }
+      break
     }
+    case 'elasticsearch': {
+      if (!isHttpsURL(f.es_url)) return 'Elasticsearch URL must be a valid http(s) URL'
+      if (f.es_auth === 'basic') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && (!credUser.value.trim() || !credPass.value)) {
+          return 'Basic auth requires username and password for new providers'
+        }
+      }
+      break
+    }
+    case 'jenkins': {
+      if (!isHttpsURL(f.jenkins_url)) return 'Jenkins URL must be a valid http(s) URL'
+      if (f.jenkins_auth === 'basic') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && (!credUser.value.trim() || !credPass.value)) {
+          return 'Basic auth requires username and password or API token for new providers'
+        }
+      }
+      break
+    }
+    case 'artifactory': {
+      if (!isHttpsURL(f.artifactory_base_url)) return 'Artifactory base URL must be a valid http(s) URL'
+      if (f.artifactory_auth === 'basic') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && (!credUser.value.trim() || !credPass.value)) {
+          return 'Basic auth requires username and password for new providers'
+        }
+      }
+      break
+    }
+    case 'dns': {
+      if (!f.dns_hostname.trim()) return 'Hostname is required'
+      break
+    }
+    default:
+      break
   }
   return ''
 }
@@ -383,21 +691,63 @@ const canSave = computed(() => {
 })
 
 const canRunVerify = computed(() => {
-  if (form.value.provider_type === 'tcp') {
-    const h = form.value.host.trim()
-    const port = Number(form.value.port)
-    return Boolean(h) && Number.isInteger(port) && port >= 1 && port <= 65535
+  const f = form.value
+  const stored = Boolean(editingId.value && hasStoredCreds.value)
+  switch (f.provider_type) {
+    case 'tcp': {
+      const h = f.host.trim()
+      const port = Number(f.port)
+      return Boolean(h) && Number.isInteger(port) && port >= 1 && port <= 65535
+    }
+    case 'prometheus': {
+      if (!isHttpsURL(f.prom_endpoint)) return false
+      if (f.prom_auth === 'basic') {
+        if (credUser.value.trim() && credPass.value) return true
+        return stored
+      }
+      if (f.prom_auth === 'bearer') {
+        if (credBearer.value.trim()) return true
+        return stored
+      }
+      return true
+    }
+    case 'grafana': {
+      if (!isHttpsURL(f.grafana_base_url)) return false
+      if (f.grafana_auth === 'basic') {
+        if (credUser.value.trim() && credPass.value) return true
+        return stored
+      }
+      return true
+    }
+    case 'elasticsearch': {
+      if (!isHttpsURL(f.es_url)) return false
+      if (f.es_auth === 'basic') {
+        if (credUser.value.trim() && credPass.value) return true
+        return stored
+      }
+      return true
+    }
+    case 'jenkins': {
+      if (!isHttpsURL(f.jenkins_url)) return false
+      if (f.jenkins_auth === 'basic') {
+        if (credUser.value.trim() && credPass.value) return true
+        return stored
+      }
+      return true
+    }
+    case 'artifactory': {
+      if (!isHttpsURL(f.artifactory_base_url)) return false
+      if (f.artifactory_auth === 'basic') {
+        if (credUser.value.trim() && credPass.value) return true
+        return stored
+      }
+      return true
+    }
+    case 'dns':
+      return Boolean(f.dns_hostname.trim())
+    default:
+      return false
   }
-  if (!promEndpointValid()) return false
-  if (form.value.prom_auth === 'basic') {
-    if (credUser.value.trim() && credPass.value) return true
-    return Boolean(editingId.value && hasStoredPrometheusCreds.value)
-  }
-  if (form.value.prom_auth === 'bearer') {
-    if (credBearer.value.trim()) return true
-    return Boolean(editingId.value && hasStoredPrometheusCreds.value)
-  }
-  return true
 })
 
 const saveBlockedHint = computed(() => {
@@ -462,6 +812,17 @@ watch(
       form.value.port,
       form.value.prom_endpoint,
       form.value.prom_auth,
+      form.value.grafana_base_url,
+      form.value.grafana_auth,
+      form.value.es_url,
+      form.value.es_auth,
+      form.value.jenkins_url,
+      form.value.jenkins_auth,
+      form.value.artifactory_base_url,
+      form.value.artifactory_auth,
+      form.value.dns_hostname,
+      form.value.dns_record_type,
+      form.value.dns_nameserver,
     ] as const,
   () => clearVerifyOnConnectionChange(),
 )
@@ -492,35 +853,60 @@ function onTypeChange() {
 
 function openCreate() {
   editingId.value = null
-  hasStoredPrometheusCreds.value = false
-  form.value = {
-    provider_type: 'tcp',
-    name: '',
-    host: '',
-    port: 443,
-    image_url: '',
-    prom_endpoint: '',
-    prom_auth: 'none',
-  }
+  hasStoredCreds.value = false
+  form.value = emptyForm()
   resetModalState()
   modal.value = true
 }
 
 function editRow(p: Row) {
   editingId.value = p.id
-  const pt: ProviderType = p.provider_type === 'prometheus' ? 'prometheus' : 'tcp'
+  const pt = rowProviderType(p)
   const cfg = p.config_json || {}
-  form.value = {
-    provider_type: pt,
-    name: p.name || '',
-    host: pt === 'tcp' ? p.host : '',
-    port: pt === 'tcp' ? p.port : 443,
-    image_url: p.image_url?.trim() || '',
-    prom_endpoint: pt === 'prometheus' ? String(cfg.endpoint || '') : '',
-    prom_auth: (String(cfg.auth_method || 'none').toLowerCase() as 'none' | 'basic' | 'bearer') || 'none',
+  const next = emptyForm()
+  next.provider_type = pt
+  next.name = p.name || ''
+  next.image_url = p.image_url?.trim() || ''
+  switch (pt) {
+    case 'tcp':
+      next.host = p.host
+      next.port = p.port
+      break
+    case 'prometheus':
+      next.prom_endpoint = String(cfg.endpoint || '')
+      next.prom_auth = (String(cfg.auth_method || 'none').toLowerCase() as 'none' | 'basic' | 'bearer') || 'none'
+      break
+    case 'grafana':
+      next.grafana_base_url = String(cfg.base_url || '')
+      next.grafana_auth = (String(cfg.auth_method || 'none').toLowerCase() as HttpAuth) === 'basic' ? 'basic' : 'none'
+      break
+    case 'elasticsearch':
+      next.es_url = String(cfg.url || '')
+      next.es_auth = (String(cfg.auth_method || 'none').toLowerCase() as HttpAuth) === 'basic' ? 'basic' : 'none'
+      break
+    case 'jenkins':
+      next.jenkins_url = String(cfg.url || '')
+      next.jenkins_auth = (String(cfg.auth_method || 'none').toLowerCase() as HttpAuth) === 'basic' ? 'basic' : 'none'
+      break
+    case 'artifactory':
+      next.artifactory_base_url = String(cfg.base_url || '')
+      next.artifactory_auth = (String(cfg.auth_method || 'none').toLowerCase() as HttpAuth) === 'basic' ? 'basic' : 'none'
+      break
+    case 'dns':
+      next.dns_hostname = String(cfg.hostname || '')
+      {
+        const rt = String(cfg.record_type || 'a').toLowerCase()
+        if (rt === 'aaaa' || rt === 'cname' || rt === 'txt') next.dns_record_type = rt
+        else next.dns_record_type = 'a'
+      }
+      next.dns_nameserver = String(cfg.nameserver || '')
+      break
+    default:
+      break
   }
+  form.value = next
   resetModalState()
-  hasStoredPrometheusCreds.value = Boolean(p.has_prometheus_credentials)
+  hasStoredCreds.value = Boolean(p.has_stored_credentials ?? p.has_prometheus_credentials)
   modal.value = true
   if (nameTrimmed.value.length >= 3) scheduleNameAvailabilityCheck()
 }
@@ -528,7 +914,7 @@ function editRow(p: Row) {
 function closeModal() {
   modal.value = false
   editingId.value = null
-  hasStoredPrometheusCreds.value = false
+  hasStoredCreds.value = false
   resetModalState()
 }
 
@@ -536,29 +922,69 @@ function onRowImageError(id: string) {
   rowImageFailed[id] = true
 }
 
-function buildVerifyBody(): Record<string, unknown> {
-  if (form.value.provider_type === 'tcp') {
-    return {
-      provider_type: 'tcp',
-      host: form.value.host.trim(),
-      port: Number(form.value.port),
-    }
-  }
-  const body: Record<string, unknown> = {
-    provider_type: 'prometheus',
-    endpoint: form.value.prom_endpoint.trim(),
-    auth_method: form.value.prom_auth,
-  }
+function appendCreds(
+  body: Record<string, unknown>,
+  auth: 'none' | 'basic' | 'bearer' | HttpAuth,
+  includeBearer: boolean,
+) {
   const creds: Record<string, string> = {}
-  if (form.value.prom_auth === 'basic') {
+  if (auth === 'basic') {
     if (credUser.value.trim()) creds.username = credUser.value
     if (credPass.value) creds.password = credPass.value
   }
-  if (form.value.prom_auth === 'bearer' && credBearer.value) {
+  if (includeBearer && auth === 'bearer' && credBearer.value) {
     creds.bearer_token = credBearer.value
   }
   if (Object.keys(creds).length) body.credentials = creds
+}
+
+function buildVerifyBody(): Record<string, unknown> {
+  const f = form.value
+  const pt = f.provider_type
+  if (pt === 'tcp') {
+    return {
+      provider_type: 'tcp',
+      host: f.host.trim(),
+      port: Number(f.port),
+    }
+  }
+  const body: Record<string, unknown> = { provider_type: pt }
   if (editingId.value) body.service_provider_id = editingId.value
+
+  switch (pt) {
+    case 'prometheus':
+      body.endpoint = f.prom_endpoint.trim()
+      body.auth_method = f.prom_auth
+      appendCreds(body, f.prom_auth, true)
+      break
+    case 'grafana':
+      body.base_url = f.grafana_base_url.trim()
+      body.auth_method = f.grafana_auth
+      appendCreds(body, f.grafana_auth, false)
+      break
+    case 'elasticsearch':
+      body.url = f.es_url.trim()
+      body.auth_method = f.es_auth
+      appendCreds(body, f.es_auth, false)
+      break
+    case 'jenkins':
+      body.url = f.jenkins_url.trim()
+      body.auth_method = f.jenkins_auth
+      appendCreds(body, f.jenkins_auth, false)
+      break
+    case 'artifactory':
+      body.base_url = f.artifactory_base_url.trim()
+      body.auth_method = f.artifactory_auth
+      appendCreds(body, f.artifactory_auth, false)
+      break
+    case 'dns':
+      body.dns_hostname = f.dns_hostname.trim()
+      body.dns_record_type = f.dns_record_type
+      body.dns_nameserver = f.dns_nameserver.trim()
+      break
+    default:
+      break
+  }
   return body
 }
 
@@ -589,17 +1015,59 @@ async function runVerify() {
   }
 }
 
+function buildConfigJsonForSave(pt: ProviderType): Record<string, unknown> {
+  const f = form.value
+  switch (pt) {
+    case 'tcp':
+      return {}
+    case 'prometheus':
+      return { endpoint: f.prom_endpoint.trim(), auth_method: f.prom_auth }
+    case 'grafana':
+      return { base_url: f.grafana_base_url.trim(), auth_method: f.grafana_auth }
+    case 'elasticsearch':
+      return { url: f.es_url.trim(), auth_method: f.es_auth }
+    case 'jenkins':
+      return { url: f.jenkins_url.trim(), auth_method: f.jenkins_auth }
+    case 'artifactory':
+      return { base_url: f.artifactory_base_url.trim(), auth_method: f.artifactory_auth }
+    case 'dns': {
+      const o: Record<string, unknown> = {
+        hostname: f.dns_hostname.trim(),
+        record_type: f.dns_record_type,
+      }
+      if (f.dns_nameserver.trim()) o.nameserver = f.dns_nameserver.trim()
+      return o
+    }
+    default:
+      return {}
+  }
+}
+
 function buildCredentialsPayload(): Record<string, string> | undefined {
-  if (form.value.provider_type !== 'prometheus') return undefined
-  if (form.value.prom_auth === 'none') return undefined
+  const f = form.value
+  const pt = f.provider_type
   const out: Record<string, string> = {}
-  if (form.value.prom_auth === 'basic') {
-    if (credUser.value.trim()) out.username = credUser.value.trim()
-    if (credPass.value) out.password = credPass.value
+
+  if (pt === 'prometheus') {
+    if (f.prom_auth === 'none') return undefined
+    if (f.prom_auth === 'basic') {
+      if (credUser.value.trim()) out.username = credUser.value.trim()
+      if (credPass.value) out.password = credPass.value
+    }
+    if (f.prom_auth === 'bearer' && credBearer.value.trim()) {
+      out.bearer_token = credBearer.value.trim()
+    }
+    return Object.keys(out).length ? out : undefined
   }
-  if (form.value.prom_auth === 'bearer' && credBearer.value.trim()) {
-    out.bearer_token = credBearer.value.trim()
-  }
+
+  let basic = false
+  if (pt === 'grafana' && f.grafana_auth === 'basic') basic = true
+  if (pt === 'elasticsearch' && f.es_auth === 'basic') basic = true
+  if (pt === 'jenkins' && f.jenkins_auth === 'basic') basic = true
+  if (pt === 'artifactory' && f.artifactory_auth === 'basic') basic = true
+  if (!basic) return undefined
+  if (credUser.value.trim()) out.username = credUser.value.trim()
+  if (credPass.value) out.password = credPass.value
   return Object.keys(out).length ? out : undefined
 }
 
@@ -629,10 +1097,7 @@ async function save() {
     } else {
       body.host = ''
       body.port = 0
-      body.config_json = {
-        endpoint: form.value.prom_endpoint.trim(),
-        auth_method: form.value.prom_auth,
-      }
+      body.config_json = buildConfigJsonForSave(pt)
       const creds = buildCredentialsPayload()
       if (creds) body.credentials = creds
     }
@@ -782,6 +1247,13 @@ onUnmounted(() => {
   font-size: 0.8rem;
   color: var(--color-text-secondary);
   margin: 4px 0 0;
+}
+.inline-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-surface-muted, #f3f4f6);
 }
 .modal-actions--split {
   display: flex;

@@ -109,22 +109,7 @@ async function handleLogin() {
 .form-label {
   font-size: 0.85rem;
   font-weight: 500;
-  color: var(--color-text-secondary);
-}
-
-.form-input {
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  font-size: 0.9rem;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-  font-family: inherit;
-}
-
-.form-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-muted);
+  color: var(--color-form-label);
 }
 
 .password-wrapper {

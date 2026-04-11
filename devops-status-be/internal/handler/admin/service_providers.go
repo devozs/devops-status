@@ -2,12 +2,8 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/devops-status/be/internal/adapter"
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/handler"
 	"github.com/devops-status/be/internal/model"
@@ -42,6 +37,7 @@ type serviceProviderResponse struct {
 	ImageURL                 string    `json:"image_url"`
 	ProviderType             string    `json:"provider_type"`
 	ConfigJSON               any       `json:"config_json"`
+	HasStoredCredentials     bool      `json:"has_stored_credentials,omitempty"`
 	HasPrometheusCredentials bool      `json:"has_prometheus_credentials,omitempty"`
 	CreatedAt                time.Time `json:"created_at"`
 	UpdatedAt                time.Time `json:"updated_at"`
@@ -59,10 +55,36 @@ func (h *ServiceProvidersHandler) responseFrom(ctx context.Context, p *model.Ser
 		CreatedAt:    p.CreatedAt,
 		UpdatedAt:    p.UpdatedAt,
 	}
-	if h.secret != nil && p.ProviderType == "prometheus" {
-		out.HasPrometheusCredentials, _ = h.secret.HasServiceProviderPrometheusCredentials(ctx, p.ID)
+	out.HasStoredCredentials = h.hasStoredCredentialsForProvider(ctx, p)
+	if p.ProviderType == "prometheus" {
+		out.HasPrometheusCredentials = out.HasStoredCredentials
 	}
 	return out
+}
+
+func (h *ServiceProvidersHandler) hasStoredCredentialsForProvider(ctx context.Context, p *model.ServiceProvider) bool {
+	if h.secret == nil {
+		return false
+	}
+	switch p.ProviderType {
+	case "prometheus":
+		ok, _ := h.secret.HasServiceProviderPrometheusCredentials(ctx, p.ID)
+		return ok
+	case "grafana":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyGrafanaCreds)
+		return ok
+	case "elasticsearch":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyElasticsearchCreds)
+		return ok
+	case "jenkins":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyJenkinsCreds)
+		return ok
+	case "artifactory":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyArtifactoryCreds)
+		return ok
+	default:
+		return false
+	}
 }
 
 // CheckNameAvailable reports whether a provider name is free (case-insensitive). Names shorter than 3 chars skip DB.
@@ -94,120 +116,14 @@ type verifyServiceProviderBody struct {
 	Host              string            `json:"host"`
 	Port              int               `json:"port"`
 	Endpoint          string            `json:"endpoint"`
+	BaseURL           string            `json:"base_url"`
+	URL               string            `json:"url"`
 	AuthMethod        string            `json:"auth_method"`
+	DNSHostname       string            `json:"dns_hostname"`
+	DNSRecordType     string            `json:"dns_record_type"`
+	DNSNameserver     string            `json:"dns_nameserver"`
 	Credentials       map[string]string `json:"credentials"`
 	ServiceProviderID string            `json:"service_provider_id,omitempty"`
-}
-
-// VerifyReachability verifies TCP host:port or Prometheus API integration.
-func (h *ServiceProvidersHandler) VerifyReachability(w http.ResponseWriter, r *http.Request) {
-	var body verifyServiceProviderBody
-	if err := handler.DecodeJSON(r, &body); err != nil {
-		handler.WriteError(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	pt := normalizeProviderType(body.ProviderType)
-	switch pt {
-	case "tcp":
-		h.verifyTCP(w, r, body)
-	case "prometheus":
-		h.verifyPrometheus(w, r, body)
-	default:
-		handler.WriteError(w, http.StatusBadRequest, "provider_type must be tcp or prometheus")
-	}
-}
-
-func (h *ServiceProvidersHandler) verifyTCP(w http.ResponseWriter, r *http.Request, body verifyServiceProviderBody) {
-	host := strings.TrimSpace(body.Host)
-	if host == "" || body.Port < 1 || body.Port > 65535 {
-		handler.WriteError(w, http.StatusBadRequest, "host and valid port (1–65535) are required for tcp")
-		return
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(body.Port))
-	start := time.Now()
-	d := net.Dialer{Timeout: 5 * time.Second}
-	c, err := d.DialContext(r.Context(), "tcp", addr)
-	if err != nil {
-		handler.WriteJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
-		})
-		return
-	}
-	_ = c.Close()
-	handler.WriteJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"latency_ms": time.Since(start).Milliseconds(),
-	})
-}
-
-func (h *ServiceProvidersHandler) verifyPrometheus(w http.ResponseWriter, r *http.Request, body verifyServiceProviderBody) {
-	endpoint := strings.TrimSpace(body.Endpoint)
-	if endpoint == "" {
-		handler.WriteError(w, http.StatusBadRequest, "endpoint is required for prometheus")
-		return
-	}
-	if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		handler.WriteError(w, http.StatusBadRequest, "endpoint must be a valid http(s) URL")
-		return
-	}
-	authMethod := strings.ToLower(strings.TrimSpace(body.AuthMethod))
-	if authMethod == "" {
-		authMethod = "none"
-	}
-	if authMethod != "none" && authMethod != "basic" && authMethod != "bearer" {
-		handler.WriteError(w, http.StatusBadRequest, "auth_method must be none, basic, or bearer")
-		return
-	}
-
-	var stored secrets.PrometheusCredentials
-	if body.ServiceProviderID != "" && h.secret != nil {
-		id, err := uuid.Parse(strings.TrimSpace(body.ServiceProviderID))
-		if err == nil {
-			stored, _ = h.secret.ReadServiceProviderPrometheusCredentials(r.Context(), id)
-		}
-	}
-	creds := mergePrometheusCreds(body.Credentials, stored)
-
-	cfg := adapter.PrometheusConfig{
-		Endpoint:   endpoint,
-		AuthMethod: authMethod,
-		TimeoutMs:  15000,
-	}
-	switch authMethod {
-	case "basic":
-		cfg.Username = creds.Username
-		cfg.Password = creds.Password
-		if cfg.Username == "" || cfg.Password == "" {
-			handler.WriteJSON(w, http.StatusOK, map[string]any{
-				"ok":    false,
-				"error": "basic auth requires username and password (enter them or verify after saving credentials)",
-			})
-			return
-		}
-	case "bearer":
-		cfg.BearerToken = creds.BearerToken
-		if cfg.BearerToken == "" {
-			handler.WriteJSON(w, http.StatusOK, map[string]any{
-				"ok":    false,
-				"error": "bearer auth requires a token",
-			})
-			return
-		}
-	}
-
-	latencyMs, err := adapter.VerifyPrometheusIntegration(r.Context(), cfg)
-	if err != nil {
-		handler.WriteJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
-		})
-		return
-	}
-	handler.WriteJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"latency_ms": latencyMs,
-	})
 }
 
 func mergePrometheusCreds(body map[string]string, stored secrets.PrometheusCredentials) secrets.PrometheusCredentials {
@@ -277,61 +193,6 @@ func normalizeProviderType(s string) string {
 	return s
 }
 
-func prometheusConfigMap(endpoint, authMethod string) map[string]any {
-	return map[string]any{
-		"endpoint":    strings.TrimSpace(endpoint),
-		"auth_method": strings.ToLower(strings.TrimSpace(authMethod)),
-	}
-}
-
-func validateServiceProviderInput(pt, host string, port int, configJSON any) error {
-	switch pt {
-	case "tcp":
-		if host == "" {
-			return errors.New("host is required for tcp")
-		}
-		if port < 1 || port > 65535 {
-			return errors.New("port must be between 1 and 65535 for tcp")
-		}
-	case "prometheus":
-		endpoint, authMethod, err := parsePrometheusConfigJSON(configJSON)
-		if err != nil {
-			return err
-		}
-		if endpoint == "" {
-			return errors.New("prometheus endpoint is required in config_json")
-		}
-		if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return errors.New("prometheus endpoint must be a valid http(s) URL")
-		}
-		if authMethod != "none" && authMethod != "basic" && authMethod != "bearer" {
-			return errors.New("invalid auth_method in config_json")
-		}
-	default:
-		return errors.New("provider_type must be tcp or prometheus")
-	}
-	return nil
-}
-
-func parsePrometheusConfigJSON(configJSON any) (endpoint, authMethod string, err error) {
-	b, err := json.Marshal(configJSON)
-	if err != nil {
-		return "", "", errors.New("invalid config_json")
-	}
-	var m struct {
-		Endpoint   string `json:"endpoint"`
-		AuthMethod string `json:"auth_method"`
-	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return "", "", errors.New("invalid config_json")
-	}
-	am := strings.ToLower(strings.TrimSpace(m.AuthMethod))
-	if am == "" {
-		am = "none"
-	}
-	return strings.TrimSpace(m.Endpoint), am, nil
-}
-
 func (h *ServiceProvidersHandler) persistServiceProviderPrometheusCreds(ctx context.Context, providerID uuid.UUID, authMethod string, merged secrets.PrometheusCredentials) error {
 	if h.secret == nil {
 		return errors.New("secrets store not configured")
@@ -375,19 +236,11 @@ func (h *ServiceProvidersHandler) Create(w http.ResponseWriter, r *http.Request)
 		handler.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.ProviderType == "tcp" {
-		input.ConfigJSON = map[string]any{}
+	if providerTypeUsesSecretStore(input.ProviderType) && h.secret == nil {
+		handler.WriteError(w, http.StatusInternalServerError, "secrets store not configured for this provider type")
+		return
 	}
-	if input.ProviderType == "prometheus" {
-		if h.secret == nil {
-			handler.WriteError(w, http.StatusInternalServerError, "secrets store not configured for prometheus providers")
-			return
-		}
-		input.Host = ""
-		input.Port = 0
-		endpoint, authMethod, _ := parsePrometheusConfigJSON(input.ConfigJSON)
-		input.ConfigJSON = prometheusConfigMap(endpoint, authMethod)
-	}
+	normalizeServiceProviderConfigForSave(input.ProviderType, &input)
 	taken, err := h.store.ServiceProviderNameExists(r.Context(), input.Name, nil)
 	if err != nil {
 		handler.WriteError(w, http.StatusInternalServerError, "failed to validate name")
@@ -406,18 +259,10 @@ func (h *ServiceProvidersHandler) Create(w http.ResponseWriter, r *http.Request)
 		handler.WriteError(w, http.StatusInternalServerError, "failed to create")
 		return
 	}
-	if p.ProviderType == "prometheus" && h.secret != nil {
-		_, authMethod, _ := parsePrometheusConfigJSON(p.ConfigJSON)
-		if authMethod == "none" {
-			_ = h.secret.Delete(r.Context(), secrets.OwnerServiceProvider, p.ID, secrets.KeyPrometheusCreds)
-		} else {
-			merged := mergePrometheusCreds(body.Credentials, secrets.PrometheusCredentials{})
-			if err := h.persistServiceProviderPrometheusCreds(r.Context(), p.ID, authMethod, merged); err != nil {
-				_ = h.store.DeleteServiceProvider(r.Context(), p.ID)
-				handler.WriteError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
+	if err := h.persistProviderCredentialsAfterSave(r.Context(), p, body, false); err != nil {
+		_ = h.store.DeleteServiceProvider(r.Context(), p.ID)
+		handler.WriteError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	userID, _ := auth.UserIDFromContext(r.Context())
 	audit := auditServiceProviderPayload(input)
@@ -451,19 +296,11 @@ func (h *ServiceProvidersHandler) Update(w http.ResponseWriter, r *http.Request)
 		handler.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if input.ProviderType == "tcp" {
-		input.ConfigJSON = map[string]any{}
+	if providerTypeUsesSecretStore(input.ProviderType) && h.secret == nil {
+		handler.WriteError(w, http.StatusInternalServerError, "secrets store not configured for this provider type")
+		return
 	}
-	if input.ProviderType == "prometheus" {
-		if h.secret == nil {
-			handler.WriteError(w, http.StatusInternalServerError, "secrets store not configured for prometheus providers")
-			return
-		}
-		input.Host = ""
-		input.Port = 0
-		endpoint, authMethod, _ := parsePrometheusConfigJSON(input.ConfigJSON)
-		input.ConfigJSON = prometheusConfigMap(endpoint, authMethod)
-	}
+	normalizeServiceProviderConfigForSave(input.ProviderType, &input)
 	taken, err := h.store.ServiceProviderNameExists(r.Context(), input.Name, &id)
 	if err != nil {
 		handler.WriteError(w, http.StatusInternalServerError, "failed to validate name")
@@ -474,6 +311,9 @@ func (h *ServiceProvidersHandler) Update(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	prev, _ := h.store.GetServiceProviderByID(r.Context(), id)
+	if h.secret != nil && prev != nil && prev.ProviderType != input.ProviderType {
+		_ = h.secret.DeleteAllForOwner(r.Context(), secrets.OwnerServiceProvider, id)
+	}
 	p, err := h.store.UpdateServiceProvider(r.Context(), id, store.UpdateServiceProviderInput{
 		Name:         input.Name,
 		Host:         input.Host,
@@ -491,21 +331,9 @@ func (h *ServiceProvidersHandler) Update(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if h.secret != nil {
-		if prev != nil && prev.ProviderType == "prometheus" && p.ProviderType != "prometheus" {
-			_ = h.secret.DeleteAllForOwner(r.Context(), secrets.OwnerServiceProvider, id)
-		}
-		if p.ProviderType == "prometheus" {
-			_, authMethod, _ := parsePrometheusConfigJSON(p.ConfigJSON)
-			if authMethod == "none" {
-				_ = h.secret.Delete(r.Context(), secrets.OwnerServiceProvider, p.ID, secrets.KeyPrometheusCreds)
-			} else {
-				existing, _ := h.secret.ReadServiceProviderPrometheusCredentials(r.Context(), p.ID)
-				merged := mergePrometheusCreds(body.Credentials, existing)
-				if err := h.persistServiceProviderPrometheusCreds(r.Context(), p.ID, authMethod, merged); err != nil {
-					handler.WriteError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
+		if err := h.persistProviderCredentialsAfterSave(r.Context(), p, body, true); err != nil {
+			handler.WriteError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 	userID, _ := auth.UserIDFromContext(r.Context())
