@@ -8,7 +8,7 @@ DB_DIR := $(DEV_DIR)/db
 # Tunnel forwards to the Go server on the host (same as PORT from .env.dev).
 TUNNEL_TARGET_PORT := $(if $(strip $(PORT)),$(PORT),8080)
 
-.PHONY: help dev-ensure-pg-volume db-up db-down db-migrate db-seed db-reset tunnel-up tunnel-down tunnel-url dev-infra-up infra-down dev-cleanup-containers be-run be-build fe-install fe-dev dev
+.PHONY: help dev-ensure-pg-volume db-up db-down db-migrate db-migrate-remote db-seed db-seed-remote db-reset tunnel-up tunnel-down tunnel-url dev-infra-up infra-down dev-cleanup-containers be-run be-build fe-install fe-dev dev
 
 help:
 	@echo "DevOps Status - Development Commands"
@@ -24,9 +24,11 @@ help:
 	@echo "  make dev-cleanup-containers  Remove devops-status-db / devops-status-tunnel if name conflict (one-time / after moving compose)"
 	@echo ""
 	@echo "Database:"
-	@echo "  make db-migrate   Run migrations ($(DB_DIR)/migrations)"
-	@echo "  make db-seed      Run seed data"
-	@echo "  make db-reset     Drop + migrate + seed"
+	@echo "  make db-migrate        Run migrations via local Docker Postgres (devops-status-db)"
+	@echo "  make db-migrate-remote Run migrations via psql + DATABASE_URL (Azure / K8s Postgres)"
+	@echo "  make db-seed           Run seed data (Docker Postgres)"
+	@echo "  make db-seed-remote    Run seed data via psql + DATABASE_URL"
+	@echo "  make db-reset          Drop + migrate + seed"
 	@echo ""
 	@echo "Backend (runs on host):"
 	@echo "  make be-run       Run Go API server"
@@ -88,10 +90,35 @@ db-migrate:
 	done
 	@echo "Migrations applied."
 
+# Apply SQL migrations to any Postgres reachable from this machine (e.g. Azure, RDS).
+# Requires: psql (postgresql-client) and DATABASE_URL, e.g.
+#   export DATABASE_URL='postgres://user:pass@host:5432/devops_status?sslmode=require'
+# Go does not run DDL on startup (unlike JPA ddl-auto); this is the same .up.sql set as db-migrate.
+db-migrate-remote:
+ifndef DATABASE_URL
+	$(error DATABASE_URL is required, e.g. postgres://user:pass@host:5432/devops_status?sslmode=require)
+endif
+	@command -v psql >/dev/null 2>&1 || { echo "error: psql not found (install postgresql-client)"; exit 1; }
+	@echo "Running migrations against remote DATABASE_URL..."
+	@set -e; for f in $$(ls $(DB_DIR)/migrations/*.up.sql | sort); do \
+		echo "  $$f"; psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$f"; \
+	done
+	@echo "Migrations applied."
+
 db-seed:
 	@echo "Running seed data..."
 	@docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/001_admin_user.sql
-	@docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/002_sample_data.sql
+	@if [ -f $(DB_DIR)/seeds/002_sample_data.sql ]; then docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/002_sample_data.sql; fi
+	@echo "Seed data applied."
+
+db-seed-remote:
+ifndef DATABASE_URL
+	$(error DATABASE_URL is required)
+endif
+	@command -v psql >/dev/null 2>&1 || { echo "error: psql not found (install postgresql-client)"; exit 1; }
+	@echo "Running seed data against remote DATABASE_URL..."
+	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f $(DB_DIR)/seeds/001_admin_user.sql
+	@if [ -f $(DB_DIR)/seeds/002_sample_data.sql ]; then psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f $(DB_DIR)/seeds/002_sample_data.sql; fi
 	@echo "Seed data applied."
 
 db-reset:
@@ -109,7 +136,7 @@ db-reset:
 	@echo "Migrations applied."
 	@echo "Running seed data..."
 	@docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/001_admin_user.sql
-	@docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/002_sample_data.sql
+	@if [ -f $(DB_DIR)/seeds/002_sample_data.sql ]; then docker exec -i devops-status-db psql -U devops -d devops_status < $(DB_DIR)/seeds/002_sample_data.sql; fi
 	@echo "Database reset complete."
 
 # --- Backend ---
