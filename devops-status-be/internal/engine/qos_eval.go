@@ -13,8 +13,8 @@ func (e *StatusEvaluator) evaluateQoSWithThresholds(samples []store.SampleRecord
 		return "", 0
 	}
 
-	// CLI metric QoS: same worst-band aggregation as Prometheus on RawValue (number) or cli_text_value (text).
-	if ad == "cli" && len(qosBytes) > 0 {
+	// CLI / Kubernetes shell metric QoS: same worst-band aggregation as Prometheus on RawValue (number) or cli_text_value (text).
+	if (ad == "cli" || ad == "kubernetes") && len(qosBytes) > 0 {
 		var cliQ struct {
 			ValueKind       string  `json:"value_kind"`
 			GreenOperator   string  `json:"green_operator"`
@@ -85,6 +85,45 @@ func (e *StatusEvaluator) evaluateQoSWithThresholds(samples []store.SampleRecord
 				return "green", 100
 			}
 		}
+	}
+
+	// Liveness: per-sample worst of latency bands vs optional value bands (or success-only signal).
+	if ad == "liveness" && len(qosBytes) > 0 {
+		g, y, r := 0, 0, 0
+		for _, s := range samples {
+			if s.LatencyMs == nil {
+				r++
+				continue
+			}
+			raw := 0.0
+			if s.RawValue != nil {
+				raw = *s.RawValue
+			}
+			lvl, ok := adapt.LivenessPerSampleQoSLevel(qosBytes, *s.LatencyMs, raw, s.Success)
+			if !ok {
+				r++
+				continue
+			}
+			switch lvl {
+			case "green":
+				g++
+			case "yellow":
+				y++
+			default:
+				r++
+			}
+		}
+		n := g + y + r
+		if n == 0 {
+			return "red", 0
+		}
+		if r > 0 {
+			return "red", float64(g+y) / float64(n) * 100
+		}
+		if y > 0 {
+			return "yellow", float64(g) / float64(n) * 100
+		}
+		return "green", 100
 	}
 
 	// Legacy CLI triple probe: qos_level in metadata only.

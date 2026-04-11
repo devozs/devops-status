@@ -1,4 +1,16 @@
-export type AdapterType = 'http' | 'prometheus' | 'kubernetes' | 'cli'
+export type AdapterType = 'http' | 'prometheus' | 'kubernetes' | 'liveness' | 'cli'
+
+/** Service provider types eligible for liveness (service_provider source). */
+export const LIVENESS_SERVICE_PROVIDER_TYPES = [
+  'prometheus',
+  'grafana',
+  'elasticsearch',
+  'jenkins',
+  'artifactory',
+] as const
+export type LivenessServiceProviderType = (typeof LIVENESS_SERVICE_PROVIDER_TYPES)[number]
+
+export type LivenessConfigSource = 'kubernetes' | 'service_provider'
 export type ExecutionTarget = 'backend' | 'k8s_cluster'
 
 export const K8S_VERSIONS = ['1.26', '1.27', '1.28', '1.29', '1.30', '1.31', '1.32'] as const
@@ -35,10 +47,57 @@ export interface PrometheusConfig {
 export interface KubernetesConfig {
   cluster_id: string
   k8s_version: string
-  check_type: string
+  /** Legacy HTTP API checks; ignored when cli_shell is set. */
+  check_type?: string
   namespace?: string
   resource_name?: string
   label_selector?: string
+  /** When set, probe runs as a Job on the cluster (same as CLI metric shell). */
+  cli_shell?: string
+  container_prep?: string
+  runner?: CliRunnerPreset
+  runner_image?: string
+  parse_json?: boolean
+  success_exit?: number
+}
+
+/** Optional Artifactory bandwidth sample (liveness + service_provider + Artifactory SP only). */
+export interface LivenessArtifactoryConfig {
+  download_repository_path?: string
+  download_max_bytes?: number
+}
+
+/** Default / max sample size for Artifactory download probe (must match server). */
+export const ARTIFACTORY_DOWNLOAD_DEFAULT_MAX_BYTES = 5 * 1024 * 1024
+export const ARTIFACTORY_DOWNLOAD_ABS_MAX_BYTES = 50 * 1024 * 1024
+
+/** Stored in telemetry.config_json for adapter liveness. */
+export interface LivenessConfig {
+  source: LivenessConfigSource
+  kubernetes?: KubernetesConfig
+  service_provider_id?: string
+  /** Bandwidth test; only used when the linked service provider is Artifactory. */
+  artifactory?: LivenessArtifactoryConfig
+  timeout_ms?: number
+}
+
+/** Stored in telemetry.qos_thresholds for adapter liveness. */
+export interface LivenessQosLatency {
+  green_max_ms: number
+  yellow_max_ms: number
+  red_max_ms: number
+}
+
+export interface LivenessQosValue {
+  green_operator: string
+  green_threshold: number
+  yellow_operator: string
+  yellow_threshold: number
+}
+
+export interface LivenessQosThresholds {
+  latency: LivenessQosLatency
+  value?: LivenessQosValue
 }
 
 export interface CliConfig {

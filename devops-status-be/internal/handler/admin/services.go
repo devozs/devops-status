@@ -235,7 +235,7 @@ func (h *ServicesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	handler.WriteJSON(w, http.StatusOK, map[string]string{"message": "deleted"})
 }
 
-var serviceScopedAdapters = []string{"http", "prometheus", "cli"}
+var serviceScopedAdapters = []string{"http", "prometheus", "cli", "liveness"}
 
 func (h *ServicesHandler) CreateTelemetryLink(w http.ResponseWriter, r *http.Request) {
 	svcID, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -262,7 +262,11 @@ func (h *ServicesHandler) CreateTelemetryLink(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !slices.Contains(serviceScopedAdapters, t.Adapter) {
-		handler.WriteError(w, http.StatusBadRequest, "telemetry adapter must be http, prometheus, or cli for service links")
+		handler.WriteError(w, http.StatusBadRequest, "telemetry adapter must be http, prometheus, cli, or liveness for service links")
+		return
+	}
+	if t.Adapter == "liveness" && LivenessTelemetrySource(t.ConfigJSON) != "service_provider" {
+		handler.WriteError(w, http.StatusBadRequest, "liveness telemetry for services must use source service_provider")
 		return
 	}
 	link, err := h.store.CreateServiceTelemetryLink(r.Context(), svcID, input)
@@ -306,7 +310,11 @@ func (h *ServicesHandler) PatchTelemetryLink(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !slices.Contains(serviceScopedAdapters, t.Adapter) {
-		handler.WriteError(w, http.StatusBadRequest, "telemetry adapter must be http, prometheus, or cli for service links")
+		handler.WriteError(w, http.StatusBadRequest, "telemetry adapter must be http, prometheus, cli, or liveness for service links")
+		return
+	}
+	if t.Adapter == "liveness" && LivenessTelemetrySource(t.ConfigJSON) != "service_provider" {
+		handler.WriteError(w, http.StatusBadRequest, "liveness telemetry for services must use source service_provider")
 		return
 	}
 	link, err := h.store.UpdateServiceTelemetryLink(r.Context(), linkID, input)

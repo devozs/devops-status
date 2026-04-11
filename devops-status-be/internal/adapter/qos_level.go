@@ -13,13 +13,15 @@ func QoSLevelFromProbe(ad string, qosBytes []byte, result *ProbeResult, operatio
 	if len(qosBytes) == 0 || string(qosBytes) == "null" || string(qosBytes) == "{}" {
 		return ""
 	}
-	if ad == "cli" {
+	if ad == "cli" || ad == "kubernetes" {
 		if result.Metadata != nil {
 			if lvl, _ := result.Metadata["qos_level"].(string); lvl != "" {
 				return strings.ToLower(lvl)
 			}
 		}
-		return ""
+		if ad == "cli" {
+			return ""
+		}
 	}
 	if !operationalOk {
 		return ""
@@ -60,6 +62,12 @@ func QoSLevelFromProbe(ad string, qosBytes []byte, result *ProbeResult, operatio
 			return "yellow"
 		}
 		return "red"
+	case "liveness":
+		lvl, ok := LivenessPerSampleQoSLevel(qosBytes, result.LatencyMs, result.RawValue, result.Success)
+		if !ok {
+			return ""
+		}
+		return lvl
 	default:
 		return ""
 	}

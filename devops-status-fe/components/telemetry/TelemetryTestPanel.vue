@@ -31,6 +31,7 @@
       <strong>{{ verifyOk ? 'OK' : 'Failed' }}</strong>
       <span v-if="result.qos_level"> · QoS: {{ result.qos_level }}</span>
       <span v-if="result.latency_ms != null"> · {{ result.latency_ms }}ms</span>
+      <span v-if="artifactoryDownloadLine" class="muted"> · {{ artifactoryDownloadLine }}</span>
       <p v-if="result.error" class="err">{{ result.error }}</p>
       <pre v-if="result.trace" class="trace trace--summary">{{ result.trace }}</pre>
       <template v-if="adapter === 'cli' && hasCliStructuredLogs">
@@ -87,6 +88,34 @@ const verifyOk = computed(() => {
   return r.success === true
 })
 
+/** Artifactory liveness download sample summary from verify response. */
+const artifactoryDownloadLine = computed(() => {
+  if (props.adapter !== 'liveness') return ''
+  const r = result.value
+  if (!r) return ''
+  const meta = r.metadata
+  if (!meta || typeof meta !== 'object') return ''
+  const m = meta as Record<string, unknown>
+  if (String(m.liveness_check || '').toLowerCase() !== 'artifactory') return ''
+  const bytesRaw = m.download_bytes
+  const bytes = typeof bytesRaw === 'number' ? bytesRaw : Number(bytesRaw)
+  const bpsRaw = m.avg_bytes_per_sec ?? r.raw_value
+  const bps = typeof bpsRaw === 'number' ? bpsRaw : Number(bpsRaw)
+  if (!Number.isFinite(bps) || bps <= 0) return ''
+  const mibPerSec = bps / (1024 * 1024)
+  const parts = [`~${mibPerSec.toFixed(2)} MiB/s avg`]
+  if (Number.isFinite(bytes) && bytes > 0) {
+    if (bytes >= 1024 * 1024) {
+      parts.push(`${(bytes / (1024 * 1024)).toFixed(2)} MiB sampled`)
+    } else if (bytes >= 1024) {
+      parts.push(`${(bytes / 1024).toFixed(1)} KiB sampled`)
+    } else {
+      parts.push(`${Math.round(bytes)} B sampled`)
+    }
+  }
+  return parts.join(', ')
+})
+
 const cliLogsObj = computed(() => {
   const r = result.value
   if (!r) return null
@@ -131,7 +160,7 @@ const cliRunnerLine = computed(() => {
 })
 
 const hasCliStructuredLogs = computed(() => {
-  if (props.adapter !== 'cli') return false
+  if (props.adapter !== 'cli' && props.adapter !== 'kubernetes') return false
   return Boolean(
     cliStdout.value ||
       cliStderr.value ||

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/devops-status/be/internal/adapter"
+	"github.com/devops-status/be/internal/adapter/liveness"
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/config"
 	"github.com/devops-status/be/internal/engine"
@@ -134,7 +135,8 @@ func New(cfg *config.Config) (*Server, error) {
 
 	adapter.Register(adapter.NewHTTPAdapter())
 	adapter.Register(adapter.NewPrometheusAdapter())
-	adapter.Register(adapter.NewKubernetesAdapter())
+	adapter.Register(adapter.NewKubernetesAdapter(imgs, k8sRun))
+	adapter.Register(liveness.NewAdapter())
 	adapter.Register(adapter.NewCLIAdapter([]string{"curl", "kubectl", "go", "echo"}, imgs, logMax, backendRun, k8sRun))
 
 	incidentMgr := engine.NewIncidentManager(db)

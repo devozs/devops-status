@@ -51,6 +51,7 @@
             v-model="adapter"
             name="telemetry-adapter"
             aria-label="Telemetry adapter"
+            :grid-columns="adapterSegmentOptions.length"
             :options="adapterSegmentOptions"
           />
         </div>
@@ -124,6 +125,19 @@
         <!-- Kubernetes -->
         <template v-else-if="adapter === 'kubernetes'">
           <div class="form-group">
+            <label class="form-label">Probe style</label>
+            <AdminRadioGroup
+              v-model="k8sUiMode"
+              name="k8s-probe-style"
+              aria-label="Kubernetes probe style"
+              direction="vertical"
+              :options="k8sUiModeOptions"
+            />
+            <p class="hint">
+              <strong>Shell on cluster</strong> runs your script in a short-lived Job (like CLI metric probes). <strong>Legacy API check</strong> uses HTTPS calls to the API server only.
+            </p>
+          </div>
+          <div class="form-group">
             <label class="form-label">K8s version</label>
             <AdminSelect v-model="k8s.k8s_version" required aria-label="Kubernetes version" :options="k8sVersionOptions" />
           </div>
@@ -136,22 +150,252 @@
               :options="k8sClusterSelectOptions"
             />
           </div>
+          <template v-if="k8sUiMode === 'shell'">
+            <div class="form-group">
+              <label class="form-label">Runner image</label>
+              <AdminSelect v-model="k8s.runner" aria-label="Kubernetes shell runner" :options="cliRunnerOptions" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Container prep (shell)</label>
+              <textarea
+                v-model="k8s.container_prep"
+                class="form-input mono"
+                rows="3"
+                placeholder="Optional (e.g. install kubectl in the job image)"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Probe shell</label>
+              <textarea
+                v-model="k8s.cli_shell"
+                class="form-input mono"
+                rows="8"
+                required
+                placeholder="e.g. kubectl get pods -n default --no-headers | wc -l"
+              />
+              <p class="hint">
+                Stdout is used for QoS: first number in output, or JSON field <code class="mono">value</code> when parse JSON is on (same rules as CLI metric shell).
+              </p>
+            </div>
+            <label class="chk"><input v-model="k8s.parse_json" type="checkbox" /> Parse JSON stdout (numeric: field <code class="mono">value</code>)</label>
+            <h4 class="sub">QoS metric thresholds</h4>
+            <div class="form-group">
+              <label class="form-label">Value type</label>
+              <AdminSelect v-model="cm.value_kind" aria-label="Kubernetes metric value type" :options="[...metricValueKindOptions]" />
+            </div>
+            <template v-if="cm.value_kind === 'number'">
+              <div
+                class="form-row qos-band qos-band--green"
+                :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
+              >
+                <div class="form-group">
+                  <label>Green op</label>
+                  <AdminSelect v-model="cm.green_operator" aria-label="K8s green operator" :options="promOperatorOptions" />
+                </div>
+                <div class="form-group">
+                  <label>Green value</label>
+                  <input v-model.number="cm.green_threshold" type="number" step="any" class="form-input" />
+                </div>
+              </div>
+              <div
+                class="form-row qos-band qos-band--yellow"
+                :class="{ 'qos-band--blink': verifyBlinkTier === 'yellow' }"
+              >
+                <div class="form-group">
+                  <label>Yellow op</label>
+                  <AdminSelect v-model="cm.yellow_operator" aria-label="K8s yellow operator" :options="promOperatorOptions" />
+                </div>
+                <div class="form-group">
+                  <label>Yellow value</label>
+                  <input v-model.number="cm.yellow_threshold" type="number" step="any" class="form-input" />
+                </div>
+              </div>
+              <div class="form-row qos-band qos-band--red">
+                <div class="form-group hint-only">
+                  <span>Red band</span>
+                  <p class="hint">Neither green nor yellow match → red (same as Prometheus).</p>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div
+                class="form-row qos-band qos-band--green"
+                :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
+              >
+                <div class="form-group">
+                  <label>Green op</label>
+                  <AdminSelect v-model="cm.green_operator" aria-label="K8s green text operator" :options="cliTextOperatorOptions" />
+                </div>
+                <div class="form-group">
+                  <label>Green reference</label>
+                  <input v-model="cm.green_text" class="form-input mono" />
+                </div>
+              </div>
+              <div
+                class="form-row qos-band qos-band--yellow"
+                :class="{ 'qos-band--blink': verifyBlinkTier === 'yellow' }"
+              >
+                <div class="form-group">
+                  <label>Yellow op</label>
+                  <AdminSelect v-model="cm.yellow_operator" aria-label="K8s yellow text operator" :options="cliTextOperatorOptions" />
+                </div>
+                <div class="form-group">
+                  <label>Yellow reference</label>
+                  <input v-model="cm.yellow_text" class="form-input mono" />
+                </div>
+              </div>
+              <div class="form-row qos-band qos-band--red">
+                <div class="form-group hint-only">
+                  <span>Red band</span>
+                  <p class="hint">Neither band matches → red.</p>
+                </div>
+              </div>
+            </template>
+          </template>
+          <template v-else>
+            <div class="form-group">
+              <label class="form-label">Check type</label>
+              <AdminSelect v-model="k8s.check_type" aria-label="Kubernetes check type" :options="k8sCheckTypeOptions" />
+            </div>
+            <div v-if="k8s.check_type !== 'api_health' && k8s.check_type !== 'node_status'" class="form-group">
+              <label class="form-label">Namespace</label>
+              <input v-model="k8s.namespace" class="form-input" />
+            </div>
+            <div v-if="k8s.check_type === 'deployment_ready'" class="form-group">
+              <label class="form-label">Deployment name</label>
+              <input v-model="k8s.resource_name" class="form-input" required />
+            </div>
+            <div v-if="k8s.check_type === 'pod_status' || k8s.check_type === 'node_status'" class="form-group">
+              <label class="form-label">Label selector</label>
+              <input v-model="k8s.label_selector" class="form-input" />
+            </div>
+          </template>
+        </template>
+
+        <!-- Liveness (Kubernetes API or service provider connectivity) -->
+        <template v-else-if="adapter === 'liveness'">
           <div class="form-group">
-            <label class="form-label">Check type</label>
-            <AdminSelect v-model="k8s.check_type" aria-label="Kubernetes check type" :options="k8sCheckTypeOptions" />
+            <label class="form-label">Source</label>
+            <AdminRadioGroup
+              v-model="livenessSource"
+              name="liveness-source"
+              aria-label="Liveness source"
+              direction="vertical"
+              :options="livenessSourceOptions"
+            />
+            <p class="hint">
+              <strong>Kubernetes</strong> uses the same checks as Kubernetes telemetry (for environment links).
+              <strong>Service provider</strong> runs a built-in connectivity probe for the selected provider type (for service links).
+            </p>
           </div>
-          <div v-if="k8s.check_type !== 'api_health' && k8s.check_type !== 'node_status'" class="form-group">
-            <label class="form-label">Namespace</label>
-            <input v-model="k8s.namespace" class="form-input" />
-          </div>
-          <div v-if="k8s.check_type === 'deployment_ready'" class="form-group">
-            <label class="form-label">Deployment name</label>
-            <input v-model="k8s.resource_name" class="form-input" required />
-          </div>
-          <div v-if="k8s.check_type === 'pod_status' || k8s.check_type === 'node_status'" class="form-group">
-            <label class="form-label">Label selector</label>
-            <input v-model="k8s.label_selector" class="form-input" />
-          </div>
+          <template v-if="livenessSource === 'kubernetes'">
+            <div class="form-group">
+              <label class="form-label">Probe style</label>
+              <AdminRadioGroup
+                v-model="k8sUiMode"
+                name="liveness-k8s-probe-style"
+                aria-label="Liveness Kubernetes probe style"
+                direction="vertical"
+                :options="k8sUiModeOptions"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label">K8s version</label>
+              <AdminSelect v-model="k8s.k8s_version" required aria-label="Liveness Kubernetes version" :options="k8sVersionOptions" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cluster</label>
+              <AdminSelect
+                v-model="k8s.cluster_id"
+                aria-label="Liveness Kubernetes cluster"
+                placeholder="Select cluster…"
+                :options="k8sClusterSelectOptions"
+              />
+            </div>
+            <template v-if="k8sUiMode === 'shell'">
+              <div class="form-group">
+                <label class="form-label">Runner image</label>
+                <AdminSelect v-model="k8s.runner" aria-label="Liveness shell runner" :options="cliRunnerOptions" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Container prep (shell)</label>
+                <textarea v-model="k8s.container_prep" class="form-input mono" rows="3" placeholder="Optional" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Probe shell</label>
+                <textarea v-model="k8s.cli_shell" class="form-input mono" rows="8" required placeholder="Shell to run on the cluster" />
+              </div>
+              <label class="chk"><input v-model="k8s.parse_json" type="checkbox" /> Parse JSON stdout (numeric: field <code class="mono">value</code>)</label>
+              <p class="hint">
+                Shell mode requires <strong>QoS probe value</strong> below (maps to parsed numeric stdout). Latency bands still apply.
+              </p>
+            </template>
+            <template v-else>
+              <div class="form-group">
+                <label class="form-label">Check type</label>
+                <AdminSelect v-model="k8s.check_type" aria-label="Liveness check type" :options="k8sCheckTypeOptions" />
+              </div>
+              <div v-if="k8s.check_type !== 'api_health' && k8s.check_type !== 'node_status'" class="form-group">
+                <label class="form-label">Namespace</label>
+                <input v-model="k8s.namespace" class="form-input" />
+              </div>
+              <div v-if="k8s.check_type === 'deployment_ready'" class="form-group">
+                <label class="form-label">Deployment name</label>
+                <input v-model="k8s.resource_name" class="form-input" required />
+              </div>
+              <div v-if="k8s.check_type === 'pod_status' || k8s.check_type === 'node_status'" class="form-group">
+                <label class="form-label">Label selector</label>
+                <input v-model="k8s.label_selector" class="form-input" />
+              </div>
+            </template>
+          </template>
+          <template v-else>
+            <div class="form-group">
+              <label class="form-label">Service provider</label>
+              <AdminSelect
+                v-model="livenessSpId"
+                required
+                aria-label="Liveness service provider"
+                placeholder="Select provider…"
+                :options="livenessProviderSelectOptions"
+              />
+            </div>
+            <p
+              v-if="selectedLivenessProvider && selectedLivenessProvider.provider_type === 'prometheus' && selectedLivenessProvider.has_prometheus_credentials === false"
+              class="hint"
+            >
+              This provider has no stored credentials — probes may fail until you add them under Service providers.
+            </p>
+            <template v-if="selectedLivenessProvider?.provider_type === 'artifactory'">
+              <div class="form-group">
+                <label class="form-label">Download test path</label>
+                <input
+                  v-model="livenessAfDownloadPath"
+                  class="form-input mono"
+                  autocomplete="off"
+                  placeholder="e.g. libs-release-local/org/foo/artifact/1.0/file.jar"
+                />
+                <p class="hint">
+                  Optional. Repository-relative path under your Artifactory base URL (same layout as in the UI after
+                  <code class="inline-code">/artifactory/</code>). The probe pings first, then measures <strong>average download speed</strong> over a
+                  capped read (default {{ (ARTIFACTORY_DOWNLOAD_DEFAULT_MAX_BYTES / (1024 * 1024)).toFixed(0) }} MiB). Enable
+                  <strong>Also evaluate probe value</strong> below — thresholds are <strong>bytes per second</strong>.
+                </p>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Max sample bytes (optional)</label>
+                <input
+                  v-model="livenessAfMaxBytesStr"
+                  class="form-input mono"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="off"
+                  :placeholder="String(ARTIFACTORY_DOWNLOAD_DEFAULT_MAX_BYTES)"
+                />
+                <p class="hint">Leave empty for default. Maximum {{ ARTIFACTORY_DOWNLOAD_ABS_MAX_BYTES.toLocaleString() }} (server limit).</p>
+              </div>
+            </template>
+          </template>
         </template>
 
         <!-- CLI -->
@@ -335,7 +579,7 @@
         </template>
 
         <!-- QoS thresholds -->
-        <template v-if="adapter === 'http' || adapter === 'kubernetes'">
+        <template v-if="adapter === 'http' || (adapter === 'kubernetes' && k8sUiMode === 'legacy') || adapter === 'liveness'">
           <h4 class="sub">QoS latency (ms)</h4>
           <p class="hint">Whole milliseconds only. Each max must be a different value, with Green &lt; Yellow &lt; Red. Verify colors the result box to match QoS.</p>
           <div class="form-row form-row--triple">
@@ -385,6 +629,67 @@
               />
             </div>
           </div>
+        </template>
+        <template v-if="adapter === 'liveness'">
+          <template v-if="livenessSource === 'kubernetes' && k8sUiMode === 'shell'">
+            <h4 class="sub">QoS probe value (required for shell)</h4>
+            <p class="hint">
+              Required when using shell on the cluster: thresholds apply to the parsed number from probe stdout (same as Kubernetes metric telemetry).
+            </p>
+          </template>
+          <template v-else>
+            <h4 class="sub">QoS probe value (optional)</h4>
+            <p class="hint">
+              When enabled, each sample is scored as the worse of latency and value. Operators apply to the numeric probe result (1 = healthy for ping-only providers).
+            </p>
+            <p
+              v-if="livenessSource === 'service_provider' && selectedLivenessProvider?.provider_type === 'artifactory' && livenessAfDownloadPath.trim()"
+              class="hint"
+            >
+              With a download test path, <strong>probe value</strong> is average speed in <strong>bytes per second</strong> over the capped sample (ping latency still uses the bands above).
+            </p>
+            <label class="chk">
+              <input v-model="livenessValueQosEnabled" type="checkbox" />
+              Also evaluate probe value (RawValue)
+            </label>
+          </template>
+          <template v-if="livenessShellValueFieldsVisible">
+            <div
+              class="form-row qos-band qos-band--green"
+              :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
+            >
+              <div class="form-group">
+                <label>Green op</label>
+                <AdminSelect v-model="livVal.green_operator" aria-label="Liveness value green operator" :options="promOperatorOptions" />
+              </div>
+              <div class="form-group">
+                <label>Green value</label>
+                <input v-model.number="livVal.green_threshold" type="number" step="any" class="form-input" />
+              </div>
+            </div>
+            <div
+              class="form-row qos-band qos-band--yellow"
+              :class="{ 'qos-band--blink': verifyBlinkTier === 'yellow' }"
+            >
+              <div class="form-group">
+                <label>Yellow op</label>
+                <AdminSelect v-model="livVal.yellow_operator" aria-label="Liveness value yellow operator" :options="promOperatorOptions" />
+              </div>
+              <div class="form-group">
+                <label>Yellow value</label>
+                <input v-model.number="livVal.yellow_threshold" type="number" step="any" class="form-input" />
+              </div>
+            </div>
+            <div
+              class="form-row qos-band qos-band--red"
+              :class="{ 'qos-band--blink': verifyBlinkTier === 'red' }"
+            >
+              <div class="form-group hint-only">
+                <span>Red band</span>
+                <p class="hint">Values that do not meet the yellow band map to red.</p>
+              </div>
+            </div>
+          </template>
         </template>
         <template v-if="adapter === 'prometheus'">
           <h4 class="sub">QoS metric thresholds</h4>
@@ -451,17 +756,21 @@ import { X } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type {
   AdapterType,
-  TelemetryFormInitial,
   ExecutionTarget,
+  LivenessConfigSource,
+  TelemetryFormInitial,
   TelemetryK8sClusterRow,
   TelemetryServiceProviderRow,
 } from '~/types/telemetry'
 import {
+  ARTIFACTORY_DOWNLOAD_ABS_MAX_BYTES,
+  ARTIFACTORY_DOWNLOAD_DEFAULT_MAX_BYTES,
   CLI_RUNNER_PRESETS,
   CLI_TEXT_OPERATORS,
   HTTP_METHODS,
   K8S_CHECK_TYPES,
   K8S_VERSIONS,
+  LIVENESS_SERVICE_PROVIDER_TYPES,
   PROM_OPERATORS,
 } from '~/types/telemetry'
 
@@ -490,8 +799,50 @@ const adapterSegmentOptions = [
   { value: 'http', label: 'HTTP' },
   { value: 'prometheus', label: 'Prometheus' },
   { value: 'kubernetes', label: 'Kubernetes' },
+  { value: 'liveness', label: 'Liveness' },
   { value: 'cli', label: 'CLI' },
 ] as const satisfies readonly { value: AdapterType; label: string }[]
+
+const livenessSpTypes = new Set<string>(LIVENESS_SERVICE_PROVIDER_TYPES)
+const livenessSourceOptions = [
+  { value: 'kubernetes' as const, label: 'Kubernetes' },
+  { value: 'service_provider' as const, label: 'Service provider' },
+] as const satisfies readonly { value: LivenessConfigSource; label: string }[]
+
+const livenessSource = ref<LivenessConfigSource>('kubernetes')
+const livenessSpId = ref('')
+/** Artifactory liveness: repo-relative path for bandwidth sample. */
+const livenessAfDownloadPath = ref('')
+const livenessAfMaxBytesStr = ref('')
+const livenessValueQosEnabled = ref(false)
+const livVal = reactive({
+  green_operator: 'gte',
+  green_threshold: 1,
+  yellow_operator: 'gte',
+  yellow_threshold: 0.5,
+})
+
+const k8sUiMode = ref<'shell' | 'legacy'>('shell')
+const k8sUiModeOptions = [
+  { value: 'shell' as const, label: 'Shell on cluster (metric QoS)' },
+  { value: 'legacy' as const, label: 'Legacy API check' },
+] as const satisfies readonly { value: 'shell' | 'legacy'; label: string }[]
+
+const livenessArtifactoryBwPath = computed(
+  () =>
+    adapter.value === 'liveness' &&
+    livenessSource.value === 'service_provider' &&
+    selectedLivenessProvider.value?.provider_type === 'artifactory' &&
+    livenessAfDownloadPath.value.trim() !== '',
+)
+
+const livenessShellValueFieldsVisible = computed(
+  () =>
+    adapter.value === 'liveness' &&
+    (livenessValueQosEnabled.value ||
+      (livenessSource.value === 'kubernetes' && k8sUiMode.value === 'shell') ||
+      livenessArtifactoryBwPath.value),
+)
 
 const cliExecutionTargetOptions = [
   { value: 'backend', label: 'Backend' },
@@ -525,6 +876,10 @@ const k8s = reactive({
   namespace: '',
   resource_name: '',
   label_selector: '',
+  cli_shell: '',
+  container_prep: '',
+  runner: 'alpine' as (typeof CLI_RUNNER_PRESETS)[number],
+  parse_json: false,
 })
 const cliFormMode = ref<'metric' | 'legacy'>('metric')
 const cli = reactive({
@@ -621,12 +976,6 @@ watch(
   },
 )
 
-watch(adapter, (a) => {
-  if (a !== 'cli') return
-  if (props.initial?.adapter === 'cli') return
-  cliFormMode.value = 'metric'
-})
-
 function switchCliToMetric() {
   cliFormMode.value = 'metric'
   Object.assign(cq, { green_command: '', yellow_command: '', red_command: '' })
@@ -655,6 +1004,9 @@ const tcpProviders = computed(() =>
 const promProviders = computed(() =>
   serviceProviders.value.filter((p) => p.provider_type === 'prometheus'),
 )
+const livenessProviders = computed(() =>
+  serviceProviders.value.filter((p) => livenessSpTypes.has(p.provider_type)),
+)
 
 const httpMethodOptions = computed(() => HTTP_METHODS.map((m) => ({ value: m, label: m })))
 const promOperatorOptions = computed(() => PROM_OPERATORS.map((o) => ({ value: o, label: o })))
@@ -679,8 +1031,16 @@ const promProviderSelectOptions = computed(() =>
   promProviders.value.map((p) => ({ value: p.id, label: p.name })),
 )
 
+const livenessProviderSelectOptions = computed(() =>
+  livenessProviders.value.map((p) => ({ value: p.id, label: `${p.name} (${p.provider_type})` })),
+)
+
 const selectedPromProvider = computed(() =>
   promProviders.value.find((p) => p.id === prom.service_provider_id),
+)
+
+const selectedLivenessProvider = computed(() =>
+  livenessProviders.value.find((p) => p.id === livenessSpId.value),
 )
 
 function clusterMinor(ver: string): string {
@@ -727,6 +1087,7 @@ const cliClusterSelectOptions = computed(() =>
 
 const testPanelK8sVersion = computed(() => {
   if (adapter.value === 'kubernetes') return k8s.k8s_version
+  if (adapter.value === 'liveness' && livenessSource.value === 'kubernetes') return k8s.k8s_version
   if (adapter.value === 'cli' && cli.execution_target === 'k8s_cluster') return cli.k8s_version
   return ''
 })
@@ -734,6 +1095,9 @@ const testPanelK8sVersion = computed(() => {
 watch(
   () => k8s.k8s_version,
   () => {
+    const k8sProbe =
+      adapter.value === 'kubernetes' || (adapter.value === 'liveness' && livenessSource.value === 'kubernetes')
+    if (!k8sProbe) return
     if (k8s.cluster_id && !k8sFilteredClusters.value.some((c) => c.id === k8s.cluster_id)) {
       k8s.cluster_id = ''
     }
@@ -758,9 +1122,41 @@ onUnmounted(() => {
 const saving = ref(false)
 const testBusy = ref(false)
 const formError = ref('')
-const testRef = ref<{ setResult: (r: Record<string, unknown> | null) => void } | null>(null)
 /** Fingerprint of the last successful full Verify (not “Test connectivity”). Save allowed only when it matches current probe inputs. */
 const lastSuccessVerifyFingerprint = ref<string | null>(null)
+const testRef = ref<{ setResult: (r: Record<string, unknown> | null) => void } | null>(null)
+
+function clearVerifyPanelState() {
+  lastSuccessVerifyFingerprint.value = null
+  verifyBlinkTier.value = ''
+  if (verifyBlinkTimer) {
+    clearTimeout(verifyBlinkTimer)
+    verifyBlinkTimer = null
+  }
+  testRef.value?.setResult(null)
+}
+
+watch(livenessSpId, () => {
+  const p = livenessProviders.value.find((x) => x.id === livenessSpId.value)
+  if (p?.provider_type !== 'artifactory') {
+    livenessAfDownloadPath.value = ''
+    livenessAfMaxBytesStr.value = ''
+  }
+  if (adapter.value === 'liveness') clearVerifyPanelState()
+})
+
+watch([livenessAfDownloadPath, livenessAfMaxBytesStr], () => {
+  if (adapter.value === 'liveness') clearVerifyPanelState()
+})
+
+watch(adapter, (a, prev) => {
+  if (prev != null && prev !== a) {
+    clearVerifyPanelState()
+  }
+  if (a === 'cli' && props.initial?.adapter !== 'cli') {
+    cliFormMode.value = 'metric'
+  }
+})
 
 function splitArgs(s: string) {
   return s.trim() ? s.trim().split(/\s+/).filter(Boolean) : []
@@ -796,6 +1192,7 @@ function loadInitial() {
       expected_status: 200,
     })
     Object.assign(prom, { service_provider_id: '', query: '', threshold: 0, operator: 'gte' })
+    k8sUiMode.value = 'shell'
     Object.assign(k8s, {
       cluster_id: '',
       k8s_version: '1.30',
@@ -803,6 +1200,10 @@ function loadInitial() {
       namespace: '',
       resource_name: '',
       label_selector: '',
+      cli_shell: '',
+      container_prep: '',
+      runner: 'alpine',
+      parse_json: false,
     })
     cliFormMode.value = 'metric'
     Object.assign(cli, {
@@ -829,6 +1230,17 @@ function loadInitial() {
     cqGreenArgs.value = cqYellowArgs.value = cqRedArgs.value = ''
     Object.assign(latQos, { green_max_ms: 1500, yellow_max_ms: 2000, red_max_ms: 3000 })
     Object.assign(pq, { green_operator: 'gte', green_threshold: 0, yellow_operator: 'gte', yellow_threshold: 0 })
+    livenessSource.value = 'kubernetes'
+    livenessSpId.value = ''
+    livenessAfDownloadPath.value = ''
+    livenessAfMaxBytesStr.value = ''
+    livenessValueQosEnabled.value = false
+    Object.assign(livVal, {
+      green_operator: 'gte',
+      green_threshold: 1,
+      yellow_operator: 'gte',
+      yellow_threshold: 0.5,
+    })
     return
   }
   name.value = row.name
@@ -854,6 +1266,12 @@ function loadInitial() {
     })
   }
   if (row.adapter === 'kubernetes') {
+    const shell = String(c.cli_shell || '').trim() !== ''
+    k8sUiMode.value = shell ? 'shell' : 'legacy'
+    const rawKr = String(c.runner || 'alpine').trim()
+    const runnerVal = CLI_RUNNER_PRESETS.includes(rawKr as (typeof CLI_RUNNER_PRESETS)[number])
+      ? (rawKr as (typeof CLI_RUNNER_PRESETS)[number])
+      : 'alpine'
     Object.assign(k8s, {
       cluster_id: String(c.cluster_id || ''),
       k8s_version: String(c.k8s_version || '1.30'),
@@ -861,7 +1279,65 @@ function loadInitial() {
       namespace: String(c.namespace || ''),
       resource_name: String(c.resource_name || ''),
       label_selector: String(c.label_selector || ''),
+      cli_shell: typeof c.cli_shell === 'string' ? c.cli_shell : '',
+      container_prep: typeof c.container_prep === 'string' ? c.container_prep : '',
+      runner: runnerVal,
+      parse_json: Boolean(c.parse_json),
     })
+    if (shell) {
+      const vk = String(q.value_kind || 'number').toLowerCase()
+      cm.value_kind = vk === 'text' ? 'text' : 'number'
+      cm.green_operator = String(q.green_operator ?? (vk === 'text' ? 'eq' : 'gte'))
+      cm.green_threshold = Number(q.green_threshold ?? 0)
+      cm.yellow_operator = String(q.yellow_operator ?? (vk === 'text' ? 'eq' : 'gte'))
+      cm.yellow_threshold = Number(q.yellow_threshold ?? 0)
+      cm.green_text = String(q.green_text ?? '')
+      cm.yellow_text = String(q.yellow_text ?? '')
+    }
+  }
+  if (row.adapter === 'liveness') {
+    const src = String(c.source || '').toLowerCase().trim()
+    livenessSource.value = src === 'service_provider' ? 'service_provider' : 'kubernetes'
+    if (livenessSource.value === 'kubernetes') {
+      const inner =
+        typeof c.kubernetes === 'object' && c.kubernetes !== null
+          ? (c.kubernetes as Record<string, unknown>)
+          : {}
+      const shell = String(inner.cli_shell || '').trim() !== ''
+      k8sUiMode.value = shell ? 'shell' : 'legacy'
+      const rawKr = String(inner.runner || 'alpine').trim()
+      const runnerVal = CLI_RUNNER_PRESETS.includes(rawKr as (typeof CLI_RUNNER_PRESETS)[number])
+        ? (rawKr as (typeof CLI_RUNNER_PRESETS)[number])
+        : 'alpine'
+      Object.assign(k8s, {
+        cluster_id: String(inner.cluster_id || ''),
+        k8s_version: String(inner.k8s_version || '1.30'),
+        check_type: String(inner.check_type || 'api_health'),
+        namespace: String(inner.namespace || ''),
+        resource_name: String(inner.resource_name || ''),
+        label_selector: String(inner.label_selector || ''),
+        cli_shell: typeof inner.cli_shell === 'string' ? inner.cli_shell : '',
+        container_prep: typeof inner.container_prep === 'string' ? inner.container_prep : '',
+        runner: runnerVal,
+        parse_json: Boolean(inner.parse_json),
+      })
+      livenessSpId.value = ''
+      livenessAfDownloadPath.value = ''
+      livenessAfMaxBytesStr.value = ''
+    } else {
+      livenessSpId.value = String(c.service_provider_id || '')
+      livenessAfDownloadPath.value = ''
+      livenessAfMaxBytesStr.value = ''
+      const af = (c as Record<string, unknown>).artifactory
+      if (af && typeof af === 'object' && !Array.isArray(af)) {
+        const A = af as Record<string, unknown>
+        livenessAfDownloadPath.value = String(A.download_repository_path || '')
+        const mx = A.download_max_bytes
+        if (typeof mx === 'number' && Number.isFinite(mx)) {
+          livenessAfMaxBytesStr.value = String(Math.trunc(mx))
+        }
+      }
+    }
   }
   if (row.adapter === 'cli') {
     const rawRunner = String(c.runner || 'alpine').trim()
@@ -896,7 +1372,7 @@ function loadInitial() {
       cm.yellow_text = String(q.yellow_text ?? '')
     }
   }
-  if (row.adapter === 'http' || row.adapter === 'kubernetes') {
+  if (row.adapter === 'http' || (row.adapter === 'kubernetes' && k8sUiMode.value === 'legacy')) {
     const g = Number(q.green_max_ms ?? 200)
     const y = Number(q.yellow_max_ms ?? 500)
     latQos.green_max_ms = g
@@ -912,6 +1388,42 @@ function loadInitial() {
     pq.green_threshold = Number(q.green_threshold ?? 0)
     pq.yellow_operator = String(q.yellow_operator ?? 'gte')
     pq.yellow_threshold = Number(q.yellow_threshold ?? 0)
+  }
+  if (row.adapter === 'liveness') {
+    const lat = q.latency
+    if (lat && typeof lat === 'object' && !Array.isArray(lat)) {
+      const L = lat as Record<string, unknown>
+      const g = Number(L.green_max_ms ?? 200)
+      const y = Number(L.yellow_max_ms ?? 500)
+      latQos.green_max_ms = g
+      latQos.yellow_max_ms = y
+      let r = Number(L.red_max_ms)
+      if (!Number.isFinite(r) || !Number.isInteger(r) || r <= y) {
+        r = y + 500
+      }
+      latQos.red_max_ms = r
+    } else {
+      Object.assign(latQos, { green_max_ms: 1500, yellow_max_ms: 2000, red_max_ms: 3000 })
+    }
+    const val = q.value
+    livenessValueQosEnabled.value = false
+    Object.assign(livVal, {
+      green_operator: 'gte',
+      green_threshold: 1,
+      yellow_operator: 'gte',
+      yellow_threshold: 0.5,
+    })
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const V = val as Record<string, unknown>
+      livenessValueQosEnabled.value = true
+      livVal.green_operator = String(V.green_operator ?? 'gte')
+      livVal.green_threshold = Number(V.green_threshold ?? 1)
+      livVal.yellow_operator = String(V.yellow_operator ?? 'gte')
+      livVal.yellow_threshold = Number(V.yellow_threshold ?? 0.5)
+    }
+    if (livenessSource.value === 'kubernetes' && k8sUiMode.value === 'shell') {
+      livenessValueQosEnabled.value = true
+    }
   }
   if (row.adapter === 'cli') {
     if (cliFormMode.value === 'legacy') {
@@ -948,6 +1460,18 @@ function buildConfig(): Record<string, unknown> {
         operator: prom.operator || 'gte',
       }
     case 'kubernetes':
+      if (k8sUiMode.value === 'shell') {
+        const prep = k8s.container_prep.trim()
+        const base: Record<string, unknown> = {
+          cluster_id: k8s.cluster_id.trim(),
+          k8s_version: k8s.k8s_version,
+          cli_shell: k8s.cli_shell.trim(),
+          parse_json: k8s.parse_json,
+          runner: k8s.runner,
+        }
+        if (prep) base.container_prep = prep
+        return base
+      }
       return {
         cluster_id: k8s.cluster_id.trim(),
         k8s_version: k8s.k8s_version,
@@ -955,6 +1479,51 @@ function buildConfig(): Record<string, unknown> {
         namespace: k8s.namespace.trim() || undefined,
         resource_name: k8s.resource_name.trim() || undefined,
         label_selector: k8s.label_selector.trim() || undefined,
+      }
+    case 'liveness':
+      if (livenessSource.value === 'kubernetes') {
+        if (k8sUiMode.value === 'shell') {
+          const prep = k8s.container_prep.trim()
+          const nest: Record<string, unknown> = {
+            cluster_id: k8s.cluster_id.trim(),
+            k8s_version: k8s.k8s_version,
+            cli_shell: k8s.cli_shell.trim(),
+            parse_json: k8s.parse_json,
+            runner: k8s.runner,
+          }
+          if (prep) nest.container_prep = prep
+          return { source: 'kubernetes', kubernetes: nest }
+        }
+        return {
+          source: 'kubernetes',
+          kubernetes: {
+            cluster_id: k8s.cluster_id.trim(),
+            k8s_version: k8s.k8s_version,
+            check_type: k8s.check_type,
+            namespace: k8s.namespace.trim() || undefined,
+            resource_name: k8s.resource_name.trim() || undefined,
+            label_selector: k8s.label_selector.trim() || undefined,
+          },
+        }
+      }
+      {
+        const base: Record<string, unknown> = {
+          source: 'service_provider',
+          service_provider_id: livenessSpId.value.trim(),
+        }
+        if (selectedLivenessProvider.value?.provider_type === 'artifactory') {
+          const path = livenessAfDownloadPath.value.trim()
+          if (path) {
+            const nest: Record<string, unknown> = { download_repository_path: path }
+            const rawMax = livenessAfMaxBytesStr.value.trim()
+            if (rawMax !== '') {
+              const n = parseInt(rawMax, 10)
+              if (Number.isFinite(n) && n > 0) nest.download_max_bytes = n
+            }
+            base.artifactory = nest
+          }
+        }
+        return base
       }
     case 'cli': {
       const prep = cli.container_prep.trim()
@@ -992,11 +1561,49 @@ function buildConfig(): Record<string, unknown> {
 }
 
 function buildQos(): Record<string, unknown> {
-  if (adapter.value === 'http' || adapter.value === 'kubernetes') {
+  if (adapter.value === 'http' || (adapter.value === 'kubernetes' && k8sUiMode.value === 'legacy')) {
     return {
       green_max_ms: Math.trunc(latQos.green_max_ms),
       yellow_max_ms: Math.trunc(latQos.yellow_max_ms),
       red_max_ms: Math.trunc(latQos.red_max_ms),
+    }
+  }
+  if (adapter.value === 'kubernetes' && k8sUiMode.value === 'shell') {
+    if (cm.value_kind === 'number') {
+      return {
+        value_kind: 'number',
+        green_operator: cm.green_operator,
+        green_threshold: cm.green_threshold,
+        yellow_operator: cm.yellow_operator,
+        yellow_threshold: cm.yellow_threshold,
+      }
+    }
+    return {
+      value_kind: 'text',
+      green_operator: cm.green_operator,
+      green_text: cm.green_text,
+      yellow_operator: cm.yellow_operator,
+      yellow_text: cm.yellow_text,
+    }
+  }
+  if (adapter.value === 'liveness') {
+    const latency = {
+      green_max_ms: Math.trunc(latQos.green_max_ms),
+      yellow_max_ms: Math.trunc(latQos.yellow_max_ms),
+      red_max_ms: Math.trunc(latQos.red_max_ms),
+    }
+    const shellK = livenessSource.value === 'kubernetes' && k8sUiMode.value === 'shell'
+    if (!livenessValueQosEnabled.value && !shellK) {
+      return { latency }
+    }
+    return {
+      latency,
+      value: {
+        green_operator: livVal.green_operator,
+        green_threshold: livVal.green_threshold,
+        yellow_operator: livVal.yellow_operator,
+        yellow_threshold: livVal.yellow_threshold,
+      },
     }
   }
   if (adapter.value === 'prometheus') {
@@ -1040,6 +1647,9 @@ function buildQos(): Record<string, unknown> {
 
 function executionTarget(): ExecutionTarget {
   if (adapter.value === 'kubernetes') return 'k8s_cluster'
+  if (adapter.value === 'liveness') {
+    return livenessSource.value === 'kubernetes' ? 'k8s_cluster' : 'backend'
+  }
   if (adapter.value === 'http' || adapter.value === 'prometheus') return 'backend'
   return cli.execution_target
 }
@@ -1064,7 +1674,60 @@ function validateLocal(): string {
     const allowed = K8S_VERSIONS as readonly string[]
     if (!allowed.includes(k8s.k8s_version)) return 'Pick a supported K8s version'
     if (!k8s.cluster_id.trim()) return 'Select a cluster'
-    if (k8s.check_type === 'deployment_ready' && !k8s.resource_name.trim()) return 'Deployment name required'
+    if (k8sUiMode.value === 'shell') {
+      if (!k8s.cli_shell.trim()) return 'Probe shell is required for Kubernetes shell mode'
+      if (cm.value_kind === 'number') {
+        if (!cm.green_operator || !cm.yellow_operator) {
+          return 'Kubernetes metric QoS requires green and yellow operators'
+        }
+      } else if (!cm.green_operator || !cm.yellow_operator) {
+        return 'Kubernetes text QoS requires green and yellow operators'
+      }
+    } else if (k8s.check_type === 'deployment_ready' && !k8s.resource_name.trim()) {
+      return 'Deployment name required'
+    }
+  }
+  if (adapter.value === 'liveness') {
+    if (livenessSource.value === 'kubernetes') {
+      const allowed = K8S_VERSIONS as readonly string[]
+      if (!allowed.includes(k8s.k8s_version)) return 'Pick a supported K8s version'
+      if (!k8s.cluster_id.trim()) return 'Select a cluster'
+      if (k8sUiMode.value === 'shell') {
+        if (!k8s.cli_shell.trim()) return 'Probe shell is required for liveness Kubernetes shell mode'
+      } else if (k8s.check_type === 'deployment_ready' && !k8s.resource_name.trim()) {
+        return 'Deployment name required'
+      }
+    } else {
+      if (!livenessSpId.value.trim()) {
+        return 'Select a service provider for liveness'
+      }
+      if (selectedLivenessProvider.value?.provider_type === 'artifactory') {
+        const afPath = livenessAfDownloadPath.value.trim()
+        const rawMax = livenessAfMaxBytesStr.value.trim()
+        if (rawMax !== '' && !afPath) {
+          return 'Artifactory: set a download test path before max sample bytes'
+        }
+        if (afPath) {
+          if (afPath.includes('..')) return 'Artifactory path must not contain ..'
+          if (afPath.startsWith('/')) return 'Artifactory path must not start with /'
+          if (!/^[a-zA-Z0-9._/-]+$/.test(afPath)) {
+            return 'Artifactory path contains invalid characters (use letters, digits, ._-/)'
+          }
+          if (!livenessValueQosEnabled.value) {
+            return 'Artifactory download test requires “Also evaluate probe value” (thresholds are bytes per second)'
+          }
+          if (!livVal.green_operator || !livVal.yellow_operator) {
+            return 'Liveness value QoS requires green and yellow operators'
+          }
+          if (rawMax !== '') {
+            const n = parseInt(rawMax, 10)
+            if (!Number.isFinite(n) || n < 1 || n > ARTIFACTORY_DOWNLOAD_ABS_MAX_BYTES) {
+              return `Max sample bytes must be between 1 and ${ARTIFACTORY_DOWNLOAD_ABS_MAX_BYTES}`
+            }
+          }
+        }
+      }
+    }
   }
   if (adapter.value === 'cli') {
     if (cli.execution_target === 'k8s_cluster') {
@@ -1087,7 +1750,11 @@ function validateLocal(): string {
       return 'Legacy CLI QoS: all three commands required (or switch to metric shell QoS)'
     }
   }
-  if (adapter.value === 'http' || adapter.value === 'kubernetes') {
+  if (
+    adapter.value === 'http' ||
+    (adapter.value === 'kubernetes' && k8sUiMode.value === 'legacy') ||
+    adapter.value === 'liveness'
+  ) {
     if (!isPositiveIntMs(latQos.green_max_ms) || !isPositiveIntMs(latQos.yellow_max_ms) || !isPositiveIntMs(latQos.red_max_ms)) {
       return 'QoS latency: green, yellow, and red must be positive whole numbers (ms)'
     }
@@ -1103,6 +1770,14 @@ function validateLocal(): string {
   }
   if (adapter.value === 'prometheus') {
     if (!pq.green_operator || !pq.yellow_operator) return 'Prometheus QoS requires green and yellow operators'
+  }
+  if (
+    adapter.value === 'liveness' &&
+    (livenessValueQosEnabled.value || (livenessSource.value === 'kubernetes' && k8sUiMode.value === 'shell'))
+  ) {
+    if (!livVal.green_operator || !livVal.yellow_operator) {
+      return 'Liveness value QoS requires green and yellow operators'
+    }
   }
   return ''
 }

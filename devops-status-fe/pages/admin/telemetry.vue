@@ -223,6 +223,13 @@ const drawerK8sVersion = computed(() => {
   if (!t) return ''
   const c = (t.config_json || {}) as Record<string, unknown>
   if (t.adapter === 'kubernetes') return String(c.k8s_version || '')
+  if (t.adapter === 'liveness') {
+    const nest = c.kubernetes
+    if (nest && typeof nest === 'object' && !Array.isArray(nest)) {
+      return String((nest as Record<string, unknown>).k8s_version || '')
+    }
+    return ''
+  }
   if (t.adapter === 'cli' && t.execution_target === 'k8s_cluster') {
     return String(c.k8s_version || '')
   }

@@ -21,6 +21,8 @@ func (s *Store) ResolveTelemetryProbeConfig(ctx context.Context, sec *secrets.St
 		return s.resolveHTTPFromProvider(ctx, raw)
 	case "prometheus":
 		return s.resolvePrometheusFromProvider(ctx, sec, raw)
+	case "liveness":
+		return s.resolveLivenessProbeConfig(ctx, sec, raw)
 	default:
 		return raw, nil
 	}

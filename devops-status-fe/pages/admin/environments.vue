@@ -406,7 +406,9 @@ const form = ref({
 })
 
 const clusters = ref<ClusterRow[]>([])
-const allTelemetry = ref<{ id: string; name: string; display_name?: string; adapter: string }[]>([])
+const allTelemetry = ref<
+  { id: string; name: string; display_name?: string; adapter: string; config_json?: Record<string, unknown> }[]
+>([])
 const envLinks = ref<EnvLink[]>([])
 const linkEdit = ref<Record<string, {
   telemetry_id: string
@@ -594,7 +596,16 @@ function resetSlugValidation() {
   loadedSlugBaseline.value = ''
 }
 
-const k8sTelemetry = computed(() => allTelemetry.value.filter((d) => d.adapter === 'kubernetes'))
+function telemetryLinkableToEnvironment(d: { adapter: string; config_json?: Record<string, unknown> }) {
+  if (d.adapter === 'kubernetes') return true
+  if (d.adapter !== 'liveness') return false
+  const src = String(d.config_json?.source ?? '')
+    .toLowerCase()
+    .trim()
+  return src === 'kubernetes'
+}
+
+const k8sTelemetry = computed(() => allTelemetry.value.filter(telemetryLinkableToEnvironment))
 
 const envTypeSelectOptions = [
   { value: 'dev', label: 'Development' },

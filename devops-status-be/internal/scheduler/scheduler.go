@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -250,8 +251,36 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 	defer cancel()
 
 	var result *adapter.ProbeResult
-	if job.Adapter == "cli" && adapter.HasCLIMetricQoS(cfgJSON, job.QosThresholds) {
+	shellMetric := adapter.HasCLIMetricQoS(cfgJSON, job.QosThresholds)
+	var livenessShellMetric bool
+	var livenessInner json.RawMessage
+	var livenessSynQos []byte
+	if job.Adapter == "liveness" {
+		var w struct {
+			LivenessCheck string          `json:"liveness_check"`
+			Config        json.RawMessage `json:"config"`
+		}
+		if json.Unmarshal(cfgJSON, &w) == nil && strings.EqualFold(strings.TrimSpace(w.LivenessCheck), "kubernetes") {
+			var kc adapter.KubernetesConfig
+			if json.Unmarshal(w.Config, &kc) == nil && strings.TrimSpace(kc.CLIShell) != "" {
+				if syn, ok := adapter.BuildSyntheticMetricQoSFromLivenessValue(job.QosThresholds); ok && adapter.HasCLIMetricQoS(w.Config, syn) {
+					livenessShellMetric = true
+					livenessInner = w.Config
+					livenessSynQos = syn
+				}
+			}
+		}
+	}
+
+	if (job.Adapter == "cli" || job.Adapter == "kubernetes") && shellMetric {
 		result, err = adapter.RunCLIMetricShellProbe(probeCtx, a, cfgJSON, job.QosThresholds)
+	} else if job.Adapter == "liveness" && livenessShellMetric {
+		ka, kerr := adapter.Get("kubernetes")
+		if kerr != nil {
+			err = kerr
+		} else {
+			result, err = adapter.RunCLIMetricShellProbe(probeCtx, ka, livenessInner, livenessSynQos)
+		}
 	} else if job.Adapter == "cli" && adapter.HasCLIPQoSThresholds(job.QosThresholds) {
 		result, err = adapter.RunCLIPQoSProbe(probeCtx, a, cfgJSON, job.QosThresholds)
 	}
@@ -268,7 +297,16 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 	}
 
 	var rawVal *float64
-	if job.Adapter == "cli" && adapter.HasCLIMetricQoS(cfgJSON, job.QosThresholds) && adapter.CLIMetricValueKind(job.QosThresholds) == "number" {
+	qosForNumberKind := job.QosThresholds
+	if job.Adapter == "liveness" && livenessShellMetric {
+		qosForNumberKind = livenessSynQos
+	}
+	if (job.Adapter == "cli" || job.Adapter == "kubernetes") && shellMetric && adapter.CLIMetricValueKind(job.QosThresholds) == "number" {
+		if result.Success {
+			v := result.RawValue
+			rawVal = &v
+		}
+	} else if job.Adapter == "liveness" && livenessShellMetric && adapter.CLIMetricValueKind(qosForNumberKind) == "number" {
 		if result.Success {
 			v := result.RawValue
 			rawVal = &v
@@ -292,7 +330,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		SourceTrace:  result.Trace,
 	}
 
-	if job.Adapter == "cli" {
+	if job.Adapter == "cli" || (job.Adapter == "kubernetes" && shellMetric) || (job.Adapter == "liveness" && livenessShellMetric) {
 		opRec.MetadataJSON = adapter.TrimCLIProbeMetadata(opRec.MetadataJSON)
 	}
 	if err := sc.store.InsertSampleResult(ctx, opRec); err != nil {
@@ -320,7 +358,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 			MetadataJSON: meta,
 			SourceTrace:  result.Trace,
 		}
-		if job.Adapter == "cli" {
+		if job.Adapter == "cli" || (job.Adapter == "kubernetes" && shellMetric) || (job.Adapter == "liveness" && livenessShellMetric) {
 			qosRec.MetadataJSON = adapter.TrimCLIProbeMetadata(qosRec.MetadataJSON)
 		}
 		if err := sc.store.InsertSampleResult(ctx, qosRec); err != nil {

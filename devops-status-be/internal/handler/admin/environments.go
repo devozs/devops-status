@@ -258,8 +258,8 @@ func (h *EnvironmentsHandler) CreateTelemetryLink(w http.ResponseWriter, r *http
 		handler.WriteError(w, http.StatusBadRequest, "telemetry not found")
 		return
 	}
-	if t.Adapter != "kubernetes" {
-		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry")
+	if !EnvironmentTelemetryAdapterAllowed(t) {
+		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry or liveness with source kubernetes")
 		return
 	}
 	link, err := h.store.CreateEnvironmentTelemetryLink(r.Context(), envID, input)
@@ -302,8 +302,8 @@ func (h *EnvironmentsHandler) PatchTelemetryLink(w http.ResponseWriter, r *http.
 		handler.WriteError(w, http.StatusBadRequest, "telemetry not found")
 		return
 	}
-	if t.Adapter != "kubernetes" {
-		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry")
+	if !EnvironmentTelemetryAdapterAllowed(t) {
+		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry or liveness with source kubernetes")
 		return
 	}
 	link, err := h.store.UpdateEnvironmentTelemetryLink(r.Context(), linkID, input)

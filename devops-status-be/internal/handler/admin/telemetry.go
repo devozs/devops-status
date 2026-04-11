@@ -98,6 +98,9 @@ func (h *TelemetryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		input.TimeoutMs = DefaultTimeoutMs(input.Adapter)
 	}
 	input.ExecutionTarget = EffectiveExecutionTarget(input.Adapter, input.ExecutionTarget)
+	if input.Adapter == "liveness" && LivenessTelemetrySource(input.ConfigJSON) == "kubernetes" {
+		input.ExecutionTarget = "k8s_cluster"
+	}
 	normalizeTelemetryConfig(&input)
 
 	cfgBytes, _ := json.Marshal(input.ConfigJSON)
@@ -153,6 +156,9 @@ func (h *TelemetryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		input.TimeoutMs = DefaultTimeoutMs(input.Adapter)
 	}
 	input.ExecutionTarget = EffectiveExecutionTarget(input.Adapter, input.ExecutionTarget)
+	if input.Adapter == "liveness" && LivenessTelemetrySource(input.ConfigJSON) == "kubernetes" {
+		input.ExecutionTarget = "k8s_cluster"
+	}
 	normalizeTelemetryConfig(&input)
 
 	cfgBytes, _ := json.Marshal(input.ConfigJSON)

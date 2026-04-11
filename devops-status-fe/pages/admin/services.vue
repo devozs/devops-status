@@ -386,7 +386,9 @@ const form = ref({
 })
 
 const providers = ref<Provider[]>([])
-const allTelemetry = ref<{ id: string; name: string; display_name?: string; adapter: string }[]>([])
+const allTelemetry = ref<
+  { id: string; name: string; display_name?: string; adapter: string; config_json?: Record<string, unknown> }[]
+>([])
 const svcLinks = ref<SvcLink[]>([])
 const linkEdit = ref<Record<string, {
   telemetry_id: string
@@ -555,9 +557,16 @@ function resetSlugValidation() {
   loadedSlugBaseline.value = ''
 }
 
-const serviceTelemetry = computed(() =>
-  allTelemetry.value.filter((d) => ['http', 'prometheus', 'cli'].includes(d.adapter)),
-)
+function telemetryLinkableToService(d: { adapter: string; config_json?: Record<string, unknown> }) {
+  if (['http', 'prometheus', 'cli'].includes(d.adapter)) return true
+  if (d.adapter !== 'liveness') return false
+  const src = String(d.config_json?.source ?? '')
+    .toLowerCase()
+    .trim()
+  return src === 'service_provider'
+}
+
+const serviceTelemetry = computed(() => allTelemetry.value.filter(telemetryLinkableToService))
 
 function providerLabel(p: Provider) {
   const n = p.name.trim()

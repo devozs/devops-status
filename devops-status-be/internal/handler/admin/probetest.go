@@ -104,8 +104,36 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var result *adapter.ProbeResult
-	if req.Adapter == "cli" && adapter.HasCLIMetricQoS(cfgBytes, qosBytes) {
+	shellMetric := adapter.HasCLIMetricQoS(cfgBytes, qosBytes)
+	var livenessShellMetric bool
+	var livenessInner json.RawMessage
+	var livenessSynQos []byte
+	if req.Adapter == "liveness" {
+		var w struct {
+			LivenessCheck string          `json:"liveness_check"`
+			Config        json.RawMessage `json:"config"`
+		}
+		if json.Unmarshal(cfgBytes, &w) == nil && strings.EqualFold(strings.TrimSpace(w.LivenessCheck), "kubernetes") {
+			var kc adapter.KubernetesConfig
+			if json.Unmarshal(w.Config, &kc) == nil && strings.TrimSpace(kc.CLIShell) != "" {
+				if syn, ok := adapter.BuildSyntheticMetricQoSFromLivenessValue(qosBytes); ok && adapter.HasCLIMetricQoS(w.Config, syn) {
+					livenessShellMetric = true
+					livenessInner = w.Config
+					livenessSynQos = syn
+				}
+			}
+		}
+	}
+
+	if (req.Adapter == "cli" || req.Adapter == "kubernetes") && shellMetric {
 		result, err = adapter.RunCLIMetricShellProbe(testCtx, a, cfgBytes, qosBytes)
+	} else if req.Adapter == "liveness" && livenessShellMetric {
+		ka, kerr := adapter.Get("kubernetes")
+		if kerr != nil {
+			err = kerr
+		} else {
+			result, err = adapter.RunCLIMetricShellProbe(testCtx, ka, livenessInner, livenessSynQos)
+		}
 	} else if req.Adapter == "cli" && adapter.HasCLIPQoSThresholds(qosBytes) {
 		result, err = adapter.RunCLIPQoSProbe(testCtx, a, cfgBytes, qosBytes)
 	} else {
@@ -133,7 +161,7 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 		"error":          result.Error,
 		"probed_at":      result.ProbedAt,
 	}
-	if req.Adapter == "cli" {
+	if req.Adapter == "cli" || (req.Adapter == "kubernetes" && shellMetric) || (req.Adapter == "liveness" && livenessShellMetric) {
 		out["cli_logs"] = probeTestCLILogs(result.Metadata)
 	}
 	if lvl != "" {
@@ -158,6 +186,37 @@ func probeTestCLILogs(meta map[string]any) map[string]any {
 func (h *ProbeTestHandler) applyEnvironmentBinding(ctx context.Context, req probeTestRequest, cfgBytes []byte) ([]byte, error) {
 	if req.Adapter == "http" || req.Adapter == "prometheus" {
 		return cfgBytes, nil
+	}
+	if req.Adapter == "liveness" {
+		var cfg map[string]any
+		if err := json.Unmarshal(cfgBytes, &cfg); err != nil {
+			return cfgBytes, nil
+		}
+		src, _ := cfg["source"].(string)
+		if strings.ToLower(strings.TrimSpace(src)) != "kubernetes" {
+			return cfgBytes, nil
+		}
+		if req.EnvironmentID == nil {
+			return cfgBytes, nil
+		}
+		cluster, err := h.store.GetConnectedClusterForEnvironment(ctx, *req.EnvironmentID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("load cluster: %w", err)
+		}
+		nest, ok := cfg["kubernetes"].(map[string]any)
+		if !ok || nest == nil {
+			return nil, fmt.Errorf("liveness kubernetes config is required when source is kubernetes")
+		}
+		nest["cluster_id"] = cluster.ID.String()
+		want, _ := nest["k8s_version"].(string)
+		if want != "" && !k8sMinorVersionMatch(cluster.K8sVersion, want) {
+			return nil, fmt.Errorf("cluster kubernetes version %s does not match telemetry target %s", cluster.K8sVersion, want)
+		}
+		cfg["kubernetes"] = nest
+		return json.Marshal(cfg)
 	}
 	if req.EnvironmentID == nil {
 		return cfgBytes, nil

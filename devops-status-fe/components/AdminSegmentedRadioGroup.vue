@@ -1,6 +1,7 @@
 <template>
   <div
     class="admin-segmented"
+    :style="{ gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))` }"
     role="radiogroup"
     :aria-label="ariaLabel"
     :aria-disabled="disabled ? 'true' : undefined"
@@ -37,8 +38,10 @@ const props = withDefaults(
     name?: string
     disabled?: boolean
     ariaLabel?: string
+    /** Grid column count; default 4 matches historical layout. Override per screen (e.g. telemetry has 5 adapters). */
+    gridColumns?: number
   }>(),
-  { name: undefined, disabled: false, ariaLabel: undefined },
+  { name: undefined, disabled: false, ariaLabel: undefined, gridColumns: 4 },
 )
 
 const emit = defineEmits<{
@@ -65,7 +68,6 @@ function onPick(v: string | number) {
 <style scoped>
 .admin-segmented {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   width: 100%;
   min-height: 44px;
   padding: 3px;

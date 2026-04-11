@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-type KubernetesAdapter struct{}
+type KubernetesAdapter struct {
+	k8sRun       K8sCLIRunner
+	runnerImages CLIRunnerImages
+}
 
 type KubernetesConfig struct {
 	ClusterID        string `json:"cluster_id"`
@@ -29,10 +32,26 @@ type KubernetesConfig struct {
 	TimeoutMs        int    `json:"timeout_ms,omitempty"`
 	APIGroup         string `json:"api_group,omitempty"`
 	APIVersion       string `json:"api_version,omitempty"`
+	// Shell metric mode (cluster Job): when non-empty, runs like CLI k8s_cluster + cli_shell instead of HTTP checks.
+	CLIShell      string `json:"cli_shell,omitempty"`
+	ContainerPrep string `json:"container_prep,omitempty"`
+	Runner        string `json:"runner,omitempty"`
+	RunnerImage   string `json:"runner_image,omitempty"`
+	ParseJSON     bool   `json:"parse_json,omitempty"`
+	SuccessExit   int    `json:"success_exit,omitempty"`
 }
 
-func NewKubernetesAdapter() *KubernetesAdapter {
-	return &KubernetesAdapter{}
+func NewKubernetesAdapter(imgs CLIRunnerImages, k8s K8sCLIRunner) *KubernetesAdapter {
+	if imgs.Legacy == "" {
+		imgs.Legacy = "alpine:3.20"
+	}
+	if imgs.Alpine == "" {
+		imgs.Alpine = imgs.Legacy
+	}
+	if imgs.Ubuntu24 == "" {
+		imgs.Ubuntu24 = "ubuntu:24.04"
+	}
+	return &KubernetesAdapter{k8sRun: k8s, runnerImages: imgs}
 }
 
 func (a *KubernetesAdapter) Name() string { return "kubernetes" }
@@ -41,6 +60,10 @@ func (a *KubernetesAdapter) Probe(ctx context.Context, configRaw json.RawMessage
 	var cfg KubernetesConfig
 	if err := json.Unmarshal(configRaw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse kubernetes config: %w", err)
+	}
+
+	if strings.TrimSpace(cfg.CLIShell) != "" {
+		return a.probeShell(ctx, cfg)
 	}
 
 	start := time.Now()
@@ -76,6 +99,50 @@ func (a *KubernetesAdapter) Probe(ctx context.Context, configRaw json.RawMessage
 		result.LatencyMs = int(time.Since(start).Milliseconds())
 		return result, nil
 	}
+}
+
+func (a *KubernetesAdapter) probeShell(ctx context.Context, cfg KubernetesConfig) (*ProbeResult, error) {
+	cliCfg := CLIConfig{
+		CLIShell:        cfg.CLIShell,
+		ContainerPrep:   cfg.ContainerPrep,
+		Runner:          cfg.Runner,
+		RunnerImage:     cfg.RunnerImage,
+		ParseJSON:       cfg.ParseJSON,
+		SuccessExit:     cfg.SuccessExit,
+		TimeoutMs:       cfg.TimeoutMs,
+		ExecutionTarget: "k8s_cluster",
+		ClusterID:       cfg.ClusterID,
+		K8sVersion:      cfg.K8sVersion,
+		Endpoint:        cfg.Endpoint,
+		Token:           cfg.Token,
+		InsecureSkipTLS: cfg.InsecureSkipTLS,
+	}
+	if strings.TrimSpace(cliCfg.Runner) == "" {
+		cliCfg.Runner = "alpine"
+	}
+	image, err := ResolveCLIContainerImage(cliCfg, a.runnerImages)
+	if err != nil {
+		return &ProbeResult{
+			Success:  false,
+			ProbedAt: time.Now(),
+			Error:    err.Error(),
+		}, nil
+	}
+	if a.k8sRun == nil {
+		return &ProbeResult{
+			Success:  false,
+			ProbedAt: time.Now(),
+			Error:    "kubernetes shell runner not configured",
+		}, nil
+	}
+	if cfg.Endpoint == "" || cfg.Token == "" {
+		return &ProbeResult{
+			Success:  false,
+			ProbedAt: time.Now(),
+			Error:    "cluster endpoint and token required after credential merge for kubernetes shell",
+		}, nil
+	}
+	return a.k8sRun(ctx, cfg.Endpoint, cfg.Token, cfg.InsecureSkipTLS, image, cliCfg)
 }
 
 func (a *KubernetesAdapter) k8sHTTPClient(cfg KubernetesConfig) *http.Client {
