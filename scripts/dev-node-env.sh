@@ -3,8 +3,8 @@
 # nvm: sourcing nvm.sh alone does not activate a version; nvm use is required.
 
 ensure_npm_on_path() {
-  command -v npm >/dev/null 2>&1 && return 0
-
+  # Prefer nvm when present: a system-wide npm (e.g. Node 18 apt) must not short-circuit
+  # before nvm use, or Nuxt 3.21+ will fail (needs Node ^20.19 || >=22.12).
   local nvm_sh="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
   if [[ -s "$nvm_sh" ]]; then
     # shellcheck source=/dev/null
