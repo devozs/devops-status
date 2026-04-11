@@ -12,17 +12,27 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-push:
     env:
-      REGISTRY: ghcr.io/devozs
       IMAGE: devops-status-frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Import Secrets
+        id: import-secrets
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ secrets.VAULT_ADDRESS }}
+          token: ${{ secrets.VAULT_TOKEN }}
+          tlsSkipVerify: true
+          secrets: |
+            DevOps-k8s/data/artifactory url | DOCKER_REGISTRY_URL ;
+            DevOps-k8s/data/artifactory username | DOCKER_REGISTRY_USER ;
+            DevOps-k8s/data/artifactory token | DOCKER_REGISTRY_TOKEN ;
 
       - name: Generate build ID
         id: prep
@@ -46,38 +56,17 @@ jobs:
 
       - name: Build
         run: |
-          docker build -f devops-status-fe/Dockerfile -t ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.BUILD_ID }} .
+          REGISTRY="${{ steps.import-secrets.outputs.DOCKER_REGISTRY_URL }}"
+          docker build -f devops-status-fe/Dockerfile -t "${REGISTRY}/${{ env.IMAGE }}:${{ env.BUILD_ID }}" .
 
-      - name: Log in to GHCR
+      - name: Login to Artifactory Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ steps.import-secrets.outputs.DOCKER_REGISTRY_URL }}
+          username: ${{ steps.import-secrets.outputs.DOCKER_REGISTRY_USER }}
+          password: ${{ steps.import-secrets.outputs.DOCKER_REGISTRY_TOKEN }}
 
       - name: Docker push
         run: |
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ env.BUILD_ID }}
-
-      - name: Prune old GHCR images (keep last 3)
-        if: success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: devozs
-          PACKAGE: ${{ env.IMAGE }}
-        run: |
-          echo "Fetching versions for ghcr.io/${OWNER}/${PACKAGE}"
-          versions=$(gh api -H "Accept: application/vnd.github+json" \
-            /users/${OWNER}/packages/container/${PACKAGE}/versions \
-            --paginate -q '.[].id')
-          keep=3
-          count=0
-          for id in $versions; do
-            count=$((count+1))
-            if [ $count -le $keep ]; then
-              continue
-            fi
-            echo "Deleting older version id ${id}"
-            gh api --method DELETE -H "Accept: application/vnd.github+json" \
-              /users/${OWNER}/packages/container/${PACKAGE}/versions/${id} || true
-          done
+          REGISTRY="${{ steps.import-secrets.outputs.DOCKER_REGISTRY_URL }}"
+          docker push "${REGISTRY}/${{ env.IMAGE }}:${{ env.BUILD_ID }}"
