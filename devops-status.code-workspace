@@ -1,10 +1,13 @@
 {
 	"folders": [
 		{
+			"path": "../../habana/habana-k8s-infra-services"
+		},
+		{
 			"path": "."
 		},
 		{
-			"path": "../../sandbox/devozs"
+			"path": "../../habana/workflows"
 		}
 	],
 	"settings": {}
