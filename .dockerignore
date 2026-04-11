@@ -1,0 +1,8 @@
+# Root build context for devops-status-be/Dockerfile and devops-status-fe/Dockerfile.
+.git
+devops-status-dev
+
+# Frontend: sources must be present for FE image; omit bulky local artifacts
+devops-status-fe/node_modules
+devops-status-fe/.nuxt
+devops-status-fe/.output
