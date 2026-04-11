@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -126,6 +127,7 @@ func (h *TelemetryHandler) Create(w http.ResponseWriter, r *http.Request) {
 			handler.WriteError(w, http.StatusConflict, "telemetry with this name already exists")
 			return
 		}
+		slog.Error("create telemetry", "adapter", input.Adapter, "error", err)
 		handler.WriteError(w, http.StatusInternalServerError, "failed to create")
 		return
 	}

@@ -75,24 +75,38 @@ func MeasureArtifactoryDownload(ctx context.Context, baseURL, authMethod, userna
 
 	maxBytes = ClampArtifactoryDownloadMaxBytes(maxBytes)
 	rel := strings.TrimLeft(strings.TrimSpace(repositoryPath), "/")
-	reqURL := base + "/" + rel
 
 	dlCtx, cancel := context.WithTimeout(ctx, artifactoryDownloadTimeout)
 	defer cancel()
 
 	client := &http.Client{Timeout: artifactoryDownloadTimeout}
-	req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	if am == "basic" {
-		req.SetBasicAuth(username, password)
+
+	tryDownload := func(reqURL string) (resp *http.Response, start time.Time, err error) {
+		req, err := http.NewRequestWithContext(dlCtx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if am == "basic" {
+			req.SetBasicAuth(username, password)
+		}
+		start = time.Now()
+		resp, err = client.Do(req)
+		return resp, start, err
 	}
 
-	start := time.Now()
-	resp, err := client.Do(req)
+	reqURL := base + "/" + rel
+	resp, start, err := tryDownload(reqURL)
 	if err != nil {
 		return 0, int(time.Since(start).Milliseconds()), 0, err
+	}
+
+	if resp.StatusCode == http.StatusNotFound && artifactoryBaseURLIsHostOnly(base) {
+		resp.Body.Close()
+		retryURL := base + "/artifactory/" + rel
+		resp, start, err = tryDownload(retryURL)
+		if err != nil {
+			return 0, int(time.Since(start).Milliseconds()), 0, err
+		}
 	}
 	defer resp.Body.Close()
 

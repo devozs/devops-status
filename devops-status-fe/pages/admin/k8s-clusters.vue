@@ -95,6 +95,9 @@
                         Verify uses <code class="ping-code">NUXT_PUBLIC_API_BASE</code> → this app then runs <code class="ping-code">GET /version</code> on the cluster API with the stored token (not the public URL above).
                         Private CA / TLS: <code class="ping-code">K8S_INSECURE_SKIP_TLS_VERIFY=true</code> in <code class="ping-code">.env.dev</code> and restart the backend.
                       </p>
+                      <p v-if="isRancherStyleEndpoint(c.endpoint)" class="ping-caption ping-caption--rancher">
+                        <strong>Rancher:</strong> tokens from <code>kubectl create token</code> are usually bound to the in-cluster API audience and return HTTP 401 on the Rancher proxy URL. Use <strong>Add API token</strong> and paste the bearer from your Rancher kubeconfig for this cluster (same token <code>kubectl</code> uses against that server URL).
+                      </p>
                     </div>
                   </template>
                   <span v-else class="ping-na">—</span>
@@ -173,14 +176,19 @@
     <div v-if="manualModalCluster" class="modal-overlay" @click.self="manualModalCluster = null">
       <div class="modal-card modal-card--wide">
         <h2 class="modal-title">{{ manualModalMode === 'register' ? 'Manual cluster registration' : 'Add Kubernetes API token' }}</h2>
-        <p class="modal-subtitle">Paste a bearer token for the DevOps Status agent service account.</p>
+        <p class="modal-subtitle">Paste a bearer token the app will use for <code class="ping-code">GET /version</code> against your stored API endpoint.</p>
         <p v-if="manualModalMode === 'register'" class="help-note">
-          Completes the handshake. Paste the service account token so the status app can call your API server (same token the onboarding Job would send).
+          Completes the handshake. For a normal API server URL, use the service account token (same as the onboarding Job sends). For a Rancher proxy URL, use your kubeconfig bearer instead — see below.
         </p>
         <p v-else class="help-note">
-          You already completed the handshake without a token. Paste a token for <code>devops-status-agent</code> in <code>devops-status-system</code>.
+          You already completed the handshake without a token. For Rancher endpoints, paste the kubeconfig bearer; otherwise a token for <code>devops-status-agent</code> in <code>devops-status-system</code> works when the endpoint is the apiserver directly.
         </p>
-        <p class="mono hint-cmd">kubectl create token devops-status-agent -n devops-status-system --duration=24h</p>
+        <p v-if="manualModalCluster && isRancherStyleEndpoint(manualModalCluster.endpoint)" class="help-note help-note--rancher">
+          This cluster&apos;s endpoint looks like a <strong>Rancher</strong> proxy (<code>…/k8s/clusters/…</code>). <code>kubectl create token</code> usually produces HTTP 401 here (token audience). Paste the token from your kubeconfig for this context, e.g.
+          <code class="mono hint-cmd hint-cmd--block">kubectl config view --minify --raw -o jsonpath='{.users[0].user.token}{"\n"}'</code>
+          with the correct context selected (<code>kubectl config use-context …</code>).
+        </p>
+        <p v-else class="mono hint-cmd">kubectl create token devops-status-agent -n devops-status-system --duration=24h</p>
         <div class="form-group">
           <label class="form-label">Bearer token (paste full JWT)</label>
           <textarea v-model="manualSaToken" class="form-input token-area" rows="4" placeholder="eyJhbGciOiJSUzI1NiIs..." />
@@ -203,7 +211,11 @@
         <form class="modal-form" @submit.prevent="createCluster">
           <h3 class="modal-section-title">General</h3>
           <div class="form-group"><label class="form-label">Name<span class="form-label-required" aria-hidden="true">*</span></label><input v-model="form.name" class="form-input" required /></div>
-          <div class="form-group"><label class="form-label">API endpoint<span class="form-label-required" aria-hidden="true">*</span></label><input v-model="form.endpoint" class="form-input" required placeholder="https://k8s-api:6443" /></div>
+          <div class="form-group">
+            <label class="form-label">API endpoint<span class="form-label-required" aria-hidden="true">*</span></label>
+            <input v-model="form.endpoint" class="form-input" required placeholder="https://k8s-api:6443" />
+            <span class="form-hint">Use the server URL from <code>kubectl cluster-info</code> or kubeconfig. Rancher: <code>https://…/k8s/clusters/&lt;id&gt;</code>. Verify and probes call this URL with the stored bearer token.</span>
+          </div>
           <div class="form-group">
             <label class="form-label">DevOps Status namespace</label>
             <input :value="form.default_namespace" class="form-input form-input--locked" readonly />
@@ -386,6 +398,12 @@ function formatPingTime(at?: number) {
   return new Date(at).toLocaleTimeString()
 }
 
+/** Rancher exposes the Kubernetes API under .../k8s/clusters/<id> — SA tokens from kubectl create token often 401 here. */
+function isRancherStyleEndpoint(endpoint: string | undefined | null) {
+  if (!endpoint) return false
+  return endpoint.toLowerCase().includes('/k8s/clusters/')
+}
+
 function statusBadgeLabel(c: any) {
   if (c.status === 'connected' && c.has_api_credential && c.api_verify_ok === false) {
     return 'connected · API not verified'
@@ -562,6 +580,7 @@ onMounted(boot)
 .ping-bad { color: #991b1b; }
 .ping-time { display: block; font-size: 0.72rem; color: var(--color-text-secondary); margin-top: 4px; }
 .ping-caption { margin: 8px 0 0; font-size: 0.72rem; color: #6b7280; line-height: 1.45; }
+.ping-caption--rancher { margin-top: 6px; padding: 8px 10px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; color: #1e3a5f; }
 .ping-code { font-size: 0.68rem; background: #f3f4f6; padding: 0 4px; border-radius: 3px; }
 .ping-na { color: var(--color-text-secondary); }
 .mono { font-family: monospace; font-size: 0.85rem; }
@@ -580,6 +599,8 @@ onMounted(boot)
 .token-info { font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px; }
 .help-note { font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 12px; line-height: 1.45; }
 .hint-cmd { font-size: 0.8rem; background: #f3f4f6; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; }
+.hint-cmd--block { display: block; white-space: pre-wrap; }
+.help-note--rancher { background: #eff6ff; border: 1px solid #bfdbfe; padding: 10px 12px; border-radius: 8px; color: #1e3a5f; }
 .token-area { font-family: monospace; font-size: 0.8rem; resize: vertical; }
 .cred-yes { color: #166534; font-weight: 600; font-size: 0.85rem; }
 .cred-no { color: #b45309; font-weight: 600; font-size: 0.85rem; }

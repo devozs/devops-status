@@ -52,9 +52,16 @@ func PingVersion(ctx context.Context, endpoint, bearerToken string, insecureSkip
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if resp.StatusCode != http.StatusOK {
+		msg := fmt.Sprintf("GET /version -> HTTP %d", resp.StatusCode)
+		// Rancher exposes the Kubernetes API under .../k8s/clusters/<id>. Bound SA tokens from
+		// kubectl create token are minted for the in-cluster audience (kubernetes.default.svc) and
+		// often return 401 when used against the Rancher proxy hostname — use the kubeconfig bearer.
+		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(strings.ToLower(endpoint), "/k8s/clusters/") {
+			msg += " (Rancher: use the bearer token from your kubeconfig for this cluster, not kubectl create token — audience mismatch)"
+		}
 		return PingResult{
 			OK:         false,
-			Message:    fmt.Sprintf("GET /version -> HTTP %d", resp.StatusCode),
+			Message:    msg,
 			StatusCode: resp.StatusCode,
 		}
 	}
