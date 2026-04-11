@@ -147,9 +147,12 @@ _write_tunnel_env() {
 ensure_tunnel_healthy
 
 # Apply SQL migrations (required after pulls that add columns, e.g. k8s api_verify_*). Skip with RUN_SH_SKIP_DB_MIGRATE=1
+# Seed default admin (admin / admin123) and sample data — not run by db-migrate alone.
 if [[ "${RUN_SH_SKIP_DB_MIGRATE:-}" != "1" ]]; then
   echo "==> make db-migrate"
   make db-migrate
+  echo "==> make db-seed"
+  make db-seed
 fi
 
 # Do not use `kill 0` in EXIT cleanup: it signals this shell's process group and can
