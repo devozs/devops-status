@@ -18,10 +18,12 @@ RUN apk add --no-cache ca-certificates postgresql-client \
 
 COPY --from=build /server /server
 COPY devops-status-dev/db/migrations/*.up.sql /migrations/
+COPY devops-status-dev/db/seeds/*.sql /seeds/
 COPY devops-status-be/docker/migrate.sh /migrate.sh
+COPY devops-status-be/docker/seed.sh /seed.sh
 COPY devops-status-be/docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /migrate.sh /entrypoint.sh \
-  && chown -R nonroot:nonroot /migrations /server /migrate.sh /entrypoint.sh
+RUN chmod +x /migrate.sh /seed.sh /entrypoint.sh \
+  && chown -R nonroot:nonroot /migrations /seeds /server /migrate.sh /seed.sh /entrypoint.sh
 
 USER nonroot:nonroot
 WORKDIR /

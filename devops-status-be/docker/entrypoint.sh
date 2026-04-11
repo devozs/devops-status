@@ -6,6 +6,9 @@ if [ "${SKIP_DB_MIGRATE:-}" = "1" ]; then
 fi
 if [ -n "${DATABASE_URL:-}" ]; then
   /migrate.sh
+  if [ "${SKIP_DB_SEED:-}" != "1" ]; then
+    /seed.sh
+  fi
 else
   echo "warning: DATABASE_URL not set, skipping DB migrations" >&2
 fi
