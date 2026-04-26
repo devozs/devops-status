@@ -70,7 +70,9 @@
               <li
                 v-for="inc in group.visible"
                 :key="inc.id"
+                :id="'history-incident-' + inc.id"
                 class="timeline-item"
+                :class="{ 'timeline-item--focused': highlightIncidentId === inc.id }"
               >
                 <div class="timeline-marker" aria-hidden="true" />
                 <div class="timeline-body">
@@ -164,6 +166,8 @@ import PastIncidentCard from '~/components/PastIncidentCard.vue'
 import type { IncidentDisplayItem } from '~/types/incident-display'
 
 const { apiFetch } = useApi()
+const route = useRoute()
+const router = useRouter()
 
 const activeTab = ref<'incidents' | 'uptime'>('incidents')
 const targetFilter = ref('')
@@ -304,6 +308,69 @@ const { data: environments } = await useAsyncData('pub-environments', () =>
 const incidents = ref<IncidentDisplayItem[]>([])
 const incidentsLoading = ref(false)
 
+const pauseIncidentListReload = ref(false)
+const highlightIncidentId = ref<string | null>(null)
+let highlightClearTimer: ReturnType<typeof setTimeout> | null = null
+const skipHydrateOnce = ref(false)
+const allowQuerySync = ref(false)
+
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const componentQueryRe = /^(service|environment):[^:]+$/i
+
+function parseQueryString(v: unknown): string {
+  if (v == null) return ''
+  if (Array.isArray(v)) return String(v[0] ?? '')
+  return String(v)
+}
+
+function readFiltersFromQuery() {
+  const tt = parseQueryString(route.query.target_type)
+  if (tt === 'service' || tt === 'environment') targetFilter.value = tt
+  else targetFilter.value = ''
+
+  const comp = parseQueryString(route.query.component)
+  if (comp && componentQueryRe.test(comp)) componentSlug.value = comp
+  else componentSlug.value = ''
+}
+
+function applyTabFromQuery(forceIncidents: boolean) {
+  if (forceIncidents) {
+    activeTab.value = 'incidents'
+    return
+  }
+  const t = parseQueryString(route.query.tab)
+  if (t === 'uptime' || t === 'incidents') activeTab.value = t
+}
+
+function incidentMatchesFilters(inc: Pick<IncidentDisplayItem, 'target_type' | 'target_slug'>): boolean {
+  if (targetFilter.value && inc.target_type !== targetFilter.value) return false
+  if (componentSlug.value) {
+    const [tt, slug] = componentSlug.value.split(':')
+    if (tt && slug && (inc.target_type !== tt || inc.target_slug !== slug)) return false
+  }
+  return true
+}
+
+function monthKeyFromStarted(iso: string): string {
+  const d = new Date(iso)
+  const y = d.getUTCFullYear()
+  const m = d.getUTCMonth()
+  return `${y}-${String(m + 1).padStart(2, '0')}`
+}
+
+function setNewestYmFromIncidentStarted(startedAt: string) {
+  const d = new Date(startedAt)
+  newestYm.value = { y: d.getUTCFullYear(), m: d.getUTCMonth() }
+}
+
+function scheduleHighlightClear() {
+  if (highlightClearTimer != null) clearTimeout(highlightClearTimer)
+  highlightClearTimer = setTimeout(() => {
+    highlightIncidentId.value = null
+    highlightClearTimer = null
+  }, 8000)
+}
+
 async function loadIncidents() {
   const { since, until } = incidentSinceUntil.value
   if (!since || !until) return
@@ -323,11 +390,109 @@ async function loadIncidents() {
 }
 
 watch([newestYm, targetFilter], () => {
+  if (pauseIncidentListReload.value) return
   loadIncidents()
 }, { deep: true })
 
-onMounted(() => {
-  loadIncidents()
+async function applyRouteHydration() {
+  const incidentParam = parseQueryString(route.query.incident)
+  const hasIncident = Boolean(incidentParam && uuidRe.test(incidentParam))
+
+  pauseIncidentListReload.value = true
+  readFiltersFromQuery()
+
+  if (hasIncident) {
+    activeTab.value = 'incidents'
+  } else {
+    applyTabFromQuery(false)
+  }
+
+  if (hasIncident) {
+    let detail: { incident: IncidentDisplayItem } | null = null
+    try {
+      detail = await apiFetch<{ incident: IncidentDisplayItem }>(
+        `/api/public/incidents/${encodeURIComponent(incidentParam)}`,
+      )
+    } catch {
+      detail = null
+    }
+    if (!detail?.incident || !incidentMatchesFilters(detail.incident)) {
+      pauseIncidentListReload.value = false
+      await loadIncidents()
+      return
+    }
+
+    const inc = detail.incident
+    setNewestYmFromIncidentStarted(inc.started_at)
+    await loadIncidents()
+
+    if (!incidents.value.some((x) => x.id === inc.id)) {
+      incidents.value = [...incidents.value, inc]
+    }
+
+    await nextTick()
+    const mk = monthKeyFromStarted(inc.started_at)
+    showAllMonths[mk] = true
+    expandedIncidentId.value = inc.id
+    highlightIncidentId.value = inc.id
+    scheduleHighlightClear()
+
+    await nextTick()
+    requestAnimationFrame(() => {
+      document.getElementById(`history-incident-${inc.id}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+    })
+  } else {
+    await loadIncidents()
+  }
+
+  pauseIncidentListReload.value = false
+}
+
+function historyQueryFromState(): Record<string, string> {
+  const q: Record<string, string> = { tab: activeTab.value }
+  if (targetFilter.value) q.target_type = targetFilter.value
+  if (componentSlug.value) q.component = componentSlug.value
+  const inc = parseQueryString(route.query.incident)
+  if (inc && uuidRe.test(inc)) q.incident = inc
+  return q
+}
+
+function shallowQueryMatch(next: Record<string, string>): boolean {
+  const keys = new Set([...Object.keys(next), ...Object.keys(route.query)])
+  for (const k of keys) {
+    if (parseQueryString(route.query[k]) !== (next[k] ?? '')) return false
+  }
+  return true
+}
+
+onMounted(async () => {
+  await applyRouteHydration()
+  await nextTick()
+  allowQuerySync.value = true
+})
+
+watch(
+  () => route.fullPath,
+  () => {
+    if (!route.path.endsWith('/history')) return
+    if (skipHydrateOnce.value) {
+      skipHydrateOnce.value = false
+      return
+    }
+    applyRouteHydration()
+  },
+)
+
+watch([activeTab, targetFilter, componentSlug], () => {
+  if (!allowQuerySync.value) return
+  if (!route.path.endsWith('/history')) return
+  const next = historyQueryFromState()
+  if (shallowQueryMatch(next)) return
+  skipHydrateOnce.value = true
+  router.replace({ path: '/history', query: next })
 })
 
 const filteredIncidents = computed(() => {
@@ -878,6 +1043,11 @@ onBeforeUnmount(() => {
 }
 .timeline-item:last-child {
   padding-bottom: 8px;
+}
+.timeline-item--focused {
+  border-radius: 8px;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 4px;
 }
 .timeline-marker {
   position: absolute;

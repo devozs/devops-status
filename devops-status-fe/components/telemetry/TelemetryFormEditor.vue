@@ -1,13 +1,19 @@
 <template>
-  <div class="modal-overlay" @click.self="$emit('close')">
-    <div class="modal-card modal-card--lg">
-      <div class="modal-card__header">
-        <h2 class="modal-title">{{ title }}</h2>
-        <button type="button" class="modal-card__close" aria-label="Close" @click="$emit('close')">
-          <X :size="20" :stroke-width="2" />
-        </button>
-      </div>
-      <form class="modal-form" @submit.prevent="submit">
+  <div class="telemetry-editor-page">
+    <div class="telemetry-editor-page__header">
+      <button
+        type="button"
+        class="telemetry-editor-back"
+        aria-label="Back to telemetry list"
+        @click="requestCloseTelemetryModal"
+      >
+        <ArrowLeft :size="18" :stroke-width="2" />
+        Back
+      </button>
+      <h1 class="page-title telemetry-editor-page__title">{{ title }}</h1>
+    </div>
+    <form class="modal-form telemetry-editor-form" @submit.prevent="submit">
+        <div class="telemetry-editor-form__body">
         <h3 class="modal-section-title">General</h3>
         <div class="form-group form-group--name">
           <label class="form-label">Name</label>
@@ -51,9 +57,25 @@
             v-model="adapter"
             name="telemetry-adapter"
             aria-label="Telemetry adapter"
-            :grid-columns="adapterSegmentOptions.length"
+            :grid-columns="adapterGridColumns"
             :options="adapterSegmentOptions"
           />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Probe timeout (ms)</label>
+          <input
+            v-model.number="telemetryTimeoutMs"
+            type="number"
+            class="form-input"
+            min="1000"
+            step="1000"
+            :max="PROBE_TIMEOUT_MS_MAX"
+            required
+            aria-describedby="probe-timeout-hint"
+          />
+          <p id="probe-timeout-hint" class="hint">
+            Maximum time for probe execution (Verify and scheduled runs). HLCTL/CLI may need several minutes.
+          </p>
         </div>
 
         <!-- HTTP -->
@@ -156,25 +178,90 @@
               <AdminSelect v-model="k8s.runner" aria-label="Kubernetes shell runner" :options="cliRunnerOptions" />
             </div>
             <div class="form-group">
-              <label class="form-label">Container prep (shell)</label>
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Job environment (optional)</label>
+                <ShellHintInsertControl
+                  v-model="k8sProbeEnvLines"
+                  v-model:hint-id="k8sJobEnvHintId"
+                  :hints="shellHints.byKind.job_env"
+                  aria-label="Insert Kubernetes job environment hint"
+                />
+              </div>
+              <textarea
+                v-model="k8sProbeEnvLines"
+                class="form-input mono"
+                rows="4"
+                placeholder="REMOTE_KUBECONFIG_B64=…"
+                aria-label="Kubernetes job environment variables"
+                @input="k8sJobEnvHintId = ''"
+              />
+              <p class="hint">
+                One <code class="mono">KEY=value</code> per line. Values are stored and visible to admins. For kubectl against
+                another cluster, set e.g. <code class="mono">REMOTE_KUBECONFIG_B64</code> here and decode it in
+                <strong>Container prep</strong> (see <code class="mono">devops-status-images/README.md</code>).
+              </p>
+            </div>
+            <div class="form-group">
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Job node selector (optional)</label>
+                <ShellHintInsertControl
+                  v-model="k8sJobNodeSelectorLines"
+                  v-model:hint-id="k8sJobNodeSelectorHintId"
+                  :hints="shellHints.byKind.job_node_selector"
+                  aria-label="Insert Kubernetes job node selector hint"
+                />
+              </div>
+              <textarea
+                v-model="k8sJobNodeSelectorLines"
+                class="form-input mono"
+                rows="3"
+                placeholder="e.g. kubernetes.io/arch=amd64"
+                aria-label="Kubernetes job node selector"
+                @input="k8sJobNodeSelectorHintId = ''"
+              />
+              <p class="hint">
+                One <code class="mono">key=value</code> per line (Kubernetes <code class="mono">Pod</code> <code class="mono">nodeSelector</code>). Use to schedule the probe Job on matching nodes (e.g. GPU, OS, zone).
+              </p>
+            </div>
+            <div class="form-group">
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Container prep (shell)</label>
+                <ShellHintInsertControl
+                  v-model="k8s.container_prep"
+                  v-model:hint-id="k8sContainerPrepHintId"
+                  :hints="shellHints.byKind.container_prep"
+                  aria-label="Insert Kubernetes container prep hint"
+                />
+              </div>
               <textarea
                 v-model="k8s.container_prep"
                 class="form-input mono"
                 rows="3"
-                placeholder="Optional (e.g. install kubectl in the job image)"
+                placeholder="Optional: decode env vars into KUBECONFIG (see devops-status-images README)"
+                @input="k8sContainerPrepHintId = ''"
               />
             </div>
             <div class="form-group">
-              <label class="form-label">Probe shell</label>
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Probe shell</label>
+                <ShellHintInsertControl
+                  v-model="k8s.cli_shell"
+                  v-model:hint-id="k8sProbeShellHintId"
+                  :hints="shellHints.byKind.probe_shell"
+                  aria-label="Insert Kubernetes probe shell hint"
+                />
+              </div>
               <textarea
                 v-model="k8s.cli_shell"
                 class="form-input mono"
                 rows="8"
                 required
                 placeholder="e.g. kubectl get pods -n default --no-headers | wc -l"
+                @input="k8sProbeShellHintId = ''"
               />
               <p class="hint">
-                Stdout is used for QoS: first number in output, or JSON field <code class="mono">value</code> when parse JSON is on (same rules as CLI metric shell).
+                Stdout is used for QoS: by default the first number in output, or JSON field <code class="mono">value</code> when parse JSON is on. For noisy logs, choose
+                <strong>Last number</strong> below (same rules as CLI metric shell).
               </p>
             </div>
             <label class="chk"><input v-model="k8s.parse_json" type="checkbox" /> Parse JSON stdout (numeric: field <code class="mono">value</code>)</label>
@@ -184,6 +271,18 @@
               <AdminSelect v-model="cm.value_kind" aria-label="Kubernetes metric value type" :options="[...metricValueKindOptions]" />
             </div>
             <template v-if="cm.value_kind === 'number'">
+              <div class="form-group">
+                <label class="form-label">Numeric value from stdout</label>
+                <AdminSelect
+                  v-model="cm.numeric_value_pick"
+                  aria-label="Kubernetes numeric value from stdout"
+                  :options="[...metricNumericValuePickOptions]"
+                />
+                <p class="hint">
+                  Use <strong>Last number</strong> when the probe prints logs and a final metric (e.g. duration) on the last line. JSON parse mode always uses field
+                  <code class="mono">value</code>.
+                </p>
+              </div>
               <div
                 class="form-row qos-band qos-band--green"
                 :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
@@ -318,12 +417,84 @@
                 <AdminSelect v-model="k8s.runner" aria-label="Liveness shell runner" :options="cliRunnerOptions" />
               </div>
               <div class="form-group">
-                <label class="form-label">Container prep (shell)</label>
-                <textarea v-model="k8s.container_prep" class="form-input mono" rows="3" placeholder="Optional" />
+                <div class="telemetry-shell-hint-label-row">
+                  <label class="form-label">Job environment (optional)</label>
+                  <ShellHintInsertControl
+                    v-model="k8sProbeEnvLines"
+                    v-model:hint-id="k8sJobEnvHintId"
+                    :hints="shellHints.byKind.job_env"
+                    aria-label="Insert liveness Kubernetes job environment hint"
+                  />
+                </div>
+                <textarea
+                  v-model="k8sProbeEnvLines"
+                  class="form-input mono"
+                  rows="4"
+                  placeholder="REMOTE_KUBECONFIG_B64=…"
+                  aria-label="Liveness Kubernetes job environment variables"
+                  @input="k8sJobEnvHintId = ''"
+                />
+                <p class="hint">
+                  Same as Kubernetes telemetry: <code class="mono">KEY=value</code> per line; admin-visible. Use with Container prep
+                  to materialize kubeconfig for other clusters.
+                </p>
               </div>
               <div class="form-group">
-                <label class="form-label">Probe shell</label>
-                <textarea v-model="k8s.cli_shell" class="form-input mono" rows="8" required placeholder="Shell to run on the cluster" />
+                <div class="telemetry-shell-hint-label-row">
+                  <label class="form-label">Job node selector (optional)</label>
+                  <ShellHintInsertControl
+                    v-model="k8sJobNodeSelectorLines"
+                    v-model:hint-id="k8sJobNodeSelectorHintId"
+                    :hints="shellHints.byKind.job_node_selector"
+                    aria-label="Insert liveness job node selector hint"
+                  />
+                </div>
+                <textarea
+                  v-model="k8sJobNodeSelectorLines"
+                  class="form-input mono"
+                  rows="3"
+                  placeholder="e.g. kubernetes.io/arch=amd64"
+                  aria-label="Liveness job node selector"
+                  @input="k8sJobNodeSelectorHintId = ''"
+                />
+                <p class="hint">Same as Kubernetes shell Jobs: <code class="mono">key=value</code> per line for Pod <code class="mono">nodeSelector</code>.</p>
+              </div>
+              <div class="form-group">
+                <div class="telemetry-shell-hint-label-row">
+                  <label class="form-label">Container prep (shell)</label>
+                  <ShellHintInsertControl
+                    v-model="k8s.container_prep"
+                    v-model:hint-id="k8sContainerPrepHintId"
+                    :hints="shellHints.byKind.container_prep"
+                    aria-label="Insert liveness container prep hint"
+                  />
+                </div>
+                <textarea
+                  v-model="k8s.container_prep"
+                  class="form-input mono"
+                  rows="3"
+                  placeholder="Optional"
+                  @input="k8sContainerPrepHintId = ''"
+                />
+              </div>
+              <div class="form-group">
+                <div class="telemetry-shell-hint-label-row">
+                  <label class="form-label">Probe shell</label>
+                  <ShellHintInsertControl
+                    v-model="k8s.cli_shell"
+                    v-model:hint-id="k8sProbeShellHintId"
+                    :hints="shellHints.byKind.probe_shell"
+                    aria-label="Insert liveness probe shell hint"
+                  />
+                </div>
+                <textarea
+                  v-model="k8s.cli_shell"
+                  class="form-input mono"
+                  rows="8"
+                  required
+                  placeholder="Shell to run on the cluster"
+                  @input="k8sProbeShellHintId = ''"
+                />
               </div>
               <label class="chk"><input v-model="k8s.parse_json" type="checkbox" /> Parse JSON stdout (numeric: field <code class="mono">value</code>)</label>
               <p class="hint">
@@ -398,30 +569,103 @@
           </template>
         </template>
 
-        <!-- CLI -->
-        <template v-else-if="adapter === 'cli'">
-          <div class="form-group">
-            <label class="form-label">Execution</label>
-            <AdminRadioGroup
-              v-model="cli.execution_target"
-              name="cli-execution-target"
-              aria-label="CLI execution target"
-              direction="vertical"
-              :options="cliExecutionTargetOptions"
-            />
+        <!-- CLI / HLCTL -->
+        <template v-else-if="adapter === 'cli' || adapter === 'hlctl'">
+          <template v-if="adapter === 'hlctl'">
+            <div class="form-group">
+              <label class="form-label">HLCTL service provider</label>
+              <AdminSelect
+                v-model="hlctlSpId"
+                required
+                aria-label="HLCTL service provider"
+                placeholder="Select HLCTL provider…"
+                :options="hlctlProviderSelectOptions"
+              />
+            </div>
             <p class="hint">
-              <strong>Backend</strong> runs the probe in a disposable Linux container via <code class="mono">docker run</code> (see server
-              <code class="mono">CLI_BACKEND_EXECUTOR</code> / <code class="mono">CLI_DOCKER_NETWORK</code>), or as a Job on a
-              <strong>designated cluster</strong> when <code class="mono">CLI_BACKEND_EXECUTOR=k8s</code>.
-              <strong>Kubernetes Job</strong> uses the cluster you select below; both paths share the same shell + image presets.
+              Probes run in the <strong>management</strong> server. The server runs <code class="mono">hlctl kubeconfig</code> using credentials stored on the provider, then your shell or command (same patterns as CLI).
+            </p>
+          </template>
+          <template v-if="adapter === 'cli'">
+            <div class="form-group">
+              <label class="form-label">Execution</label>
+              <AdminRadioGroup
+                v-model="cli.execution_target"
+                name="cli-execution-target"
+                aria-label="CLI execution target"
+                direction="vertical"
+                :options="cliExecutionTargetOptions"
+              />
+              <p class="hint">
+                <strong>Backend</strong> runs the probe in a disposable Linux container via <code class="mono">docker run</code> (see server
+                <code class="mono">CLI_BACKEND_EXECUTOR</code> / <code class="mono">CLI_DOCKER_NETWORK</code>), or as a Job on a
+                <strong>designated cluster</strong> when <code class="mono">CLI_BACKEND_EXECUTOR=k8s</code>.
+                <strong>Kubernetes Job</strong> uses the cluster you select below; both paths share the same shell + image presets.
+              </p>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Runner image</label>
+              <AdminSelect v-model="cli.runner" aria-label="CLI runner image" :options="cliRunnerOptions" />
+              <p class="hint">
+                Mapped on the server to <code class="mono">CLI_RUNNER_IMAGE_TOOLKIT</code>,
+                <code class="mono">CLI_RUNNER_IMAGE_ALPINE</code>, or <code class="mono">CLI_RUNNER_IMAGE_UBUNTU_24</code>.
+              </p>
+            </div>
+          </template>
+          <div class="form-group">
+            <div class="telemetry-shell-hint-label-row">
+              <label class="form-label">Container environment (optional)</label>
+              <ShellHintInsertControl
+                v-model="cliProbeEnvLines"
+                v-model:hint-id="cliJobEnvHintId"
+                :hints="shellHints.byKind.job_env"
+                aria-label="Insert CLI container environment hint"
+              />
+            </div>
+            <textarea
+              v-model="cliProbeEnvLines"
+              class="form-input mono"
+              rows="4"
+              placeholder="KEY=value per line"
+              aria-label="CLI container environment variables"
+              @input="cliJobEnvHintId = ''"
+            />
+            <p v-if="adapter === 'cli'" class="hint">
+              Passed to <code class="mono">docker run -e</code> or the Kubernetes Job; one <code class="mono">KEY=value</code> per line.
+              Admin-visible.
+            </p>
+            <p v-else class="hint">
+              Environment for the local shell after <code class="mono">hlctl kubeconfig</code>; one <code class="mono">KEY=value</code> per
+              line. Admin-visible.
             </p>
           </div>
-          <div class="form-group">
-            <label class="form-label">Runner image</label>
-            <AdminSelect v-model="cli.runner" aria-label="CLI runner image" :options="cliRunnerOptions" />
-            <p class="hint">Mapped on the server to <code class="mono">CLI_RUNNER_IMAGE_ALPINE</code> or <code class="mono">CLI_RUNNER_IMAGE_UBUNTU_24</code>.</p>
-          </div>
-          <template v-if="cli.execution_target === 'k8s_cluster'">
+          <template v-if="adapter === 'cli'">
+            <div class="form-group">
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Job node selector (optional)</label>
+                <ShellHintInsertControl
+                  v-model="cliJobNodeSelectorLines"
+                  v-model:hint-id="cliJobNodeSelectorHintId"
+                  :hints="shellHints.byKind.job_node_selector"
+                  aria-label="Insert CLI job node selector hint"
+                />
+              </div>
+              <textarea
+                v-model="cliJobNodeSelectorLines"
+                class="form-input mono"
+                rows="3"
+                placeholder="e.g. topology.kubernetes.io/zone=us-east-1a"
+                aria-label="CLI job node selector"
+                @input="cliJobNodeSelectorHintId = ''"
+              />
+              <p class="hint">
+                Applied when this probe runs as a <strong>Kubernetes Job</strong> (execution <strong>Kubernetes Job</strong>, or
+                <strong>Backend</strong> with server <code class="mono">CLI_BACKEND_EXECUTOR=k8s</code>). Ignored for Docker backend.
+                <code class="mono">key=value</code> per line.
+              </p>
+            </div>
+          </template>
+          <template v-if="adapter === 'cli' && cli.execution_target === 'k8s_cluster'">
             <div class="form-group">
               <label class="form-label">K8s version</label>
               <AdminSelect v-model="cli.k8s_version" required aria-label="CLI Kubernetes version" :options="k8sVersionOptions" />
@@ -438,15 +682,27 @@
             </div>
           </template>
           <div class="form-group">
-            <label class="form-label">Container prep (shell)</label>
+            <div class="telemetry-shell-hint-label-row">
+              <label class="form-label">Container prep (shell)</label>
+              <ShellHintInsertControl
+                v-model="cli.container_prep"
+                v-model:hint-id="cliContainerPrepHintId"
+                :hints="shellHints.byKind.container_prep"
+                aria-label="Insert CLI container prep hint"
+              />
+            </div>
             <textarea
               v-model="cli.container_prep"
               class="form-input mono"
               rows="4"
               placeholder="Optional. Runs before the probe in the same shell (e.g. apk add --no-cache curl)."
+              @input="cliContainerPrepHintId = ''"
             />
-            <p class="hint">
+            <p v-if="adapter === 'cli'" class="hint">
               Runs first in the runner container (subshell). Install tools here (e.g. <code class="mono">apk add</code> or <code class="mono">apt-get</code>). Prep <strong>stdout</strong> is sent to <strong>stderr</strong> so you still see it when verifying (combined log / stderr), but it is <strong>not</strong> used for QoS or parsed probe values — only the probe command or probe shell writes to stdout for that.
+            </p>
+            <p v-else class="hint">
+              Runs first in the local shell on the management server (after <code class="mono">hlctl kubeconfig</code>). Prep <strong>stdout</strong> goes to <strong>stderr</strong> for debugging; only probe stdout is used for QoS.
             </p>
           </div>
 
@@ -485,13 +741,23 @@
               Runs after container prep. The server does <strong>not</strong> apply the allowlist to this body. Only this script’s <strong>stdout</strong> is used for parsing and QoS (prep output is on stderr for debugging). Use exit code 0 (default) for success; for <strong>numeric</strong> QoS the first number in this stdout (or JSON <code class="mono">value</code> when parse JSON is on) is compared to thresholds; for <strong>text</strong> QoS the whole trimmed stdout is compared to your reference strings.
             </p>
             <div class="form-group">
-              <label class="form-label">Shell script</label>
+              <div class="telemetry-shell-hint-label-row">
+                <label class="form-label">Shell script</label>
+                <ShellHintInsertControl
+                  v-model="cli.cli_shell"
+                  v-model:hint-id="cliProbeShellHintId"
+                  :hints="shellHints.byKind.probe_shell"
+                  :disabled="cliFormMode !== 'metric'"
+                  aria-label="Insert CLI probe shell hint"
+                />
+              </div>
               <textarea
                 v-model="cli.cli_shell"
                 class="form-input mono"
                 rows="10"
                 placeholder="e.g. echo 42"
                 :required="cliFormMode === 'metric'"
+                @input="cliProbeShellHintId = ''"
               />
             </div>
             <label class="chk"><input v-model="cli.parse_json" type="checkbox" /> Parse JSON stdout (numeric mode: use number field <code class="mono">value</code>)</label>
@@ -507,6 +773,18 @@
             </div>
 
             <template v-if="cm.value_kind === 'number'">
+              <div class="form-group">
+                <label class="form-label">Numeric value from stdout</label>
+                <AdminSelect
+                  v-model="cm.numeric_value_pick"
+                  aria-label="CLI numeric value from stdout"
+                  :options="[...metricNumericValuePickOptions]"
+                />
+                <p class="hint">
+                  Use <strong>Last number</strong> when the probe prints logs and a final metric (e.g. duration) on the last line. JSON parse mode always uses field
+                  <code class="mono">value</code>.
+                </p>
+              </div>
               <div
                 class="form-row qos-band qos-band--green"
                 :class="{ 'qos-band--blink': verifyBlinkTier === 'green' }"
@@ -730,13 +1008,15 @@
           :k8s-version="testPanelK8sVersion"
           :busy="testBusy"
           @verify="runTest"
+          @abort-verify="abortVerifyTest"
         />
 
         <p v-if="formError" class="field-error">{{ formError }}</p>
         <p v-if="saveBlockedHint" class="hint verify-hint">{{ saveBlockedHint }}</p>
+        </div>
 
-        <div class="modal-actions">
-          <button type="button" class="btn btn-modal-cancel" @click="$emit('close')">Cancel</button>
+        <div class="modal-actions telemetry-editor-form__actions">
+          <button type="button" class="btn btn-modal-cancel" @click="requestCloseTelemetryModal">Cancel</button>
           <button
             type="submit"
             class="btn btn-save btn-pill"
@@ -747,13 +1027,24 @@
           </button>
         </div>
       </form>
-    </div>
   </div>
+
+  <AdminUnsavedConfirmDialog
+    v-model="unsavedDialogOpen"
+    :title="unsavedDialogTitle"
+    :warning="unsavedDialogMessage"
+    :confirm-label="unsavedConfirmLabel"
+    :discard-confirm="confirmUnsavedDialog"
+    @cancel="cancelUnsavedDialog"
+  />
 </template>
 
 <script setup lang="ts">
-import { X } from 'lucide-vue-next'
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { ArrowLeft } from 'lucide-vue-next'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import ShellHintInsertControl from '~/components/telemetry/ShellHintInsertControl.vue'
+import { postProbeTestStream, ProbeStreamAbortedError } from '~/composables/useProbeTestStream'
+import { useTelemetryShellHints } from '~/composables/useTelemetryShellHints'
 import type {
   AdapterType,
   ExecutionTarget,
@@ -773,6 +1064,8 @@ import {
   LIVENESS_SERVICE_PROVIDER_TYPES,
   PROM_OPERATORS,
 } from '~/types/telemetry'
+import { formatProbeEnvLines, parseProbeEnvLines } from '~/utils/probeEnvLines'
+import { formatNodeSelectorLines, parseNodeSelectorLines } from '~/utils/nodeSelectorLines'
 
 const props = defineProps<{
   title?: string
@@ -782,7 +1075,12 @@ const props = defineProps<{
   apiFetch: (path: string, opts?: RequestInit) => Promise<unknown>
 }>()
 
-const emit = defineEmits<{ close: []; saved: [] }>()
+const emit = defineEmits<{ saved: [] }>()
+
+const shellHints = useTelemetryShellHints(props.apiFetch)
+onMounted(() => {
+  void shellHints.ensureAllLoaded()
+})
 
 const title = computed(() => {
   if (props.title) return props.title
@@ -791,17 +1089,58 @@ const title = computed(() => {
   return 'Duplicate Telemetry'
 })
 
+const PROBE_TIMEOUT_MS_MIN = 1000
+const PROBE_TIMEOUT_MS_MAX = 45 * 60 * 1000
+
+function defaultTimeoutMsForAdapter(a: AdapterType): number {
+  if (a === 'cli' || a === 'hlctl') return 600000
+  return 30000
+}
+
+function clampProbeTimeoutMs(n: number): number {
+  return Math.min(PROBE_TIMEOUT_MS_MAX, Math.max(PROBE_TIMEOUT_MS_MIN, Math.round(n)))
+}
+
 const name = ref('')
 const displayName = ref('')
 const nameTrimmed = computed(() => name.value.trim())
 const adapter = ref<AdapterType>('http')
-const adapterSegmentOptions = [
-  { value: 'http', label: 'HTTP' },
-  { value: 'prometheus', label: 'Prometheus' },
-  { value: 'kubernetes', label: 'Kubernetes' },
-  { value: 'liveness', label: 'Liveness' },
-  { value: 'cli', label: 'CLI' },
-] as const satisfies readonly { value: AdapterType; label: string }[]
+const telemetryTimeoutMs = ref(defaultTimeoutMsForAdapter('http'))
+const capabilities = ref({ hlctl_enabled: false })
+
+async function loadCapabilities() {
+  try {
+    capabilities.value = (await props.apiFetch('/api/admin/capabilities')) as { hlctl_enabled: boolean }
+  } catch {
+    capabilities.value = { hlctl_enabled: false }
+  }
+}
+
+const adapterSegmentOptions = computed(() => {
+  const all: { value: AdapterType; label: string }[] = [
+    { value: 'http', label: 'HTTP' },
+    { value: 'prometheus', label: 'Prometheus' },
+    { value: 'kubernetes', label: 'Kubernetes' },
+    { value: 'liveness', label: 'Liveness' },
+    { value: 'cli', label: 'CLI' },
+    { value: 'hlctl', label: 'HLCTL' },
+  ]
+  let opts = capabilities.value.hlctl_enabled ? all : all.filter((o) => o.value !== 'hlctl')
+  if (props.initial?.adapter === 'hlctl' && !opts.some((o) => o.value === 'hlctl')) {
+    opts = [...opts, { value: 'hlctl', label: 'HLCTL' }]
+  }
+  return opts
+})
+
+/** Match provider grid layout: 8 visible → 4 cols; 9 → 3 cols; else one row by count. */
+const adapterGridColumns = computed(() => {
+  const n = adapterSegmentOptions.value.length
+  if (n >= 9) return 3
+  if (n === 8) return 4
+  return n
+})
+
+const hlctlSpId = ref('')
 
 const livenessSpTypes = new Set<string>(LIVENESS_SERVICE_PROVIDER_TYPES)
 const livenessSourceOptions = [
@@ -878,7 +1217,7 @@ const k8s = reactive({
   label_selector: '',
   cli_shell: '',
   container_prep: '',
-  runner: 'alpine' as (typeof CLI_RUNNER_PRESETS)[number],
+  runner: 'toolkit' as (typeof CLI_RUNNER_PRESETS)[number],
   parse_json: false,
 })
 const cliFormMode = ref<'metric' | 'legacy'>('metric')
@@ -887,15 +1226,68 @@ const cli = reactive({
   args: [] as string[],
   cli_shell: '',
   container_prep: '',
-  runner: 'alpine' as (typeof CLI_RUNNER_PRESETS)[number],
+  runner: 'toolkit' as (typeof CLI_RUNNER_PRESETS)[number],
   parse_json: false,
   execution_target: 'backend' as ExecutionTarget,
   cluster_id: '',
   k8s_version: '1.30',
 })
+/** KEY=value lines for Kubernetes / Liveness shell Jobs (shared). */
+const k8sProbeEnvLines = ref('')
+/** KEY=value lines for CLI docker / Job. */
+const cliProbeEnvLines = ref('')
+/** key=value lines for Pod nodeSelector (K8s / Liveness shell Jobs). */
+const k8sJobNodeSelectorLines = ref('')
+/** key=value lines for CLI Job nodeSelector. */
+const cliJobNodeSelectorLines = ref('')
+
+/** Optional telemetry_shell_hints links (Kubernetes / Liveness K8s shell share these). */
+const k8sJobEnvHintId = ref('')
+const k8sJobNodeSelectorHintId = ref('')
+const k8sContainerPrepHintId = ref('')
+const k8sProbeShellHintId = ref('')
+/** Optional hint links for CLI adapter. */
+const cliJobEnvHintId = ref('')
+const cliJobNodeSelectorHintId = ref('')
+const cliContainerPrepHintId = ref('')
+const cliProbeShellHintId = ref('')
+
+function attachShellHintIds(
+  target: Record<string, unknown>,
+  ids: {
+    job_env_hint_id: string
+    job_node_selector_hint_id: string
+    container_prep_hint_id: string
+    probe_shell_hint_id: string
+  },
+) {
+  if (ids.job_env_hint_id.trim()) target.job_env_hint_id = ids.job_env_hint_id.trim()
+  if (ids.job_node_selector_hint_id.trim()) {
+    target.job_node_selector_hint_id = ids.job_node_selector_hint_id.trim()
+  }
+  if (ids.container_prep_hint_id.trim()) target.container_prep_hint_id = ids.container_prep_hint_id.trim()
+  if (ids.probe_shell_hint_id.trim()) target.probe_shell_hint_id = ids.probe_shell_hint_id.trim()
+}
+
+function probeEnvPayload(lines: string): Record<string, string> | undefined {
+  const t = lines.trim()
+  if (!t) return undefined
+  const p = parseProbeEnvLines(lines)
+  if (!p.ok || Object.keys(p.env).length === 0) return undefined
+  return p.env
+}
+
+function probeNodeSelectorPayload(lines: string): Record<string, string> | undefined {
+  const t = lines.trim()
+  if (!t) return undefined
+  const p = parseNodeSelectorLines(lines)
+  if (!p.ok || Object.keys(p.node_selector).length === 0) return undefined
+  return p.node_selector
+}
 /** Metric shell QoS (Prometheus-style number or text bands). */
 const cm = reactive({
   value_kind: 'number' as 'number' | 'text',
+  numeric_value_pick: 'first' as 'first' | 'last',
   green_operator: 'gte',
   green_threshold: 0,
   yellow_operator: 'gte',
@@ -913,6 +1305,105 @@ const pq = reactive({
   green_threshold: 0,
   yellow_operator: 'gte',
   yellow_threshold: 0,
+})
+
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
+const formSnapshotBaseline = ref('')
+
+function captureBaselineSnapshot(): string {
+  return JSON.stringify({
+    name: name.value.trim(),
+    displayName: displayName.value.trim(),
+    adapter: adapter.value,
+    telemetryTimeoutMs: telemetryTimeoutMs.value,
+    livenessSource: livenessSource.value,
+    livenessSpId: livenessSpId.value,
+    livenessAfPath: livenessAfDownloadPath.value,
+    livenessAfMax: livenessAfMaxBytesStr.value,
+    livenessValQoSEn: livenessValueQosEnabled.value,
+    livVal: { ...livVal },
+    k8sUiMode: k8sUiMode.value,
+    k8sProbeEnvLines: k8sProbeEnvLines.value,
+    cliProbeEnvLines: cliProbeEnvLines.value,
+    k8sJobNodeSelectorLines: k8sJobNodeSelectorLines.value,
+    cliJobNodeSelectorLines: cliJobNodeSelectorLines.value,
+    k8sJobEnvHintId: k8sJobEnvHintId.value,
+    k8sJobNodeSelectorHintId: k8sJobNodeSelectorHintId.value,
+    k8sContainerPrepHintId: k8sContainerPrepHintId.value,
+    k8sProbeShellHintId: k8sProbeShellHintId.value,
+    cliJobEnvHintId: cliJobEnvHintId.value,
+    cliJobNodeSelectorHintId: cliJobNodeSelectorHintId.value,
+    cliContainerPrepHintId: cliContainerPrepHintId.value,
+    cliProbeShellHintId: cliProbeShellHintId.value,
+    http: { ...http },
+    prom: { ...prom },
+    k8s: { ...k8s },
+    cliFormMode: cliFormMode.value,
+    hlctlSpId: hlctlSpId.value,
+    cli: { ...cli, args: [...cli.args] },
+    cm: { ...cm },
+    cq: { ...cq },
+    cqG: cqGreenArgs.value,
+    cqY: cqYellowArgs.value,
+    cqR: cqRedArgs.value,
+    latQos: { ...latQos },
+    pq: { ...pq },
+  })
+}
+
+function isTelemetryFormDirty() {
+  return captureBaselineSnapshot() !== formSnapshotBaseline.value
+}
+
+/** One-shot bypass so confirmed discard navigation is not blocked again by page route-leave guard. */
+const allowNextUnsavedBypass = ref(false)
+
+function consumeNextUnsavedBypass(): boolean {
+  if (!allowNextUnsavedBypass.value) return false
+  allowNextUnsavedBypass.value = false
+  return true
+}
+
+function requestCloseTelemetryModal() {
+  requestModalClose(
+    () => {
+      allowNextUnsavedBypass.value = true
+      void navigateTo('/admin/telemetry')
+    },
+    {
+      isDirty: () => isTelemetryFormDirty(),
+      title: 'Discard telemetry changes?',
+      message: 'You have unsaved changes to this telemetry. Discard them?',
+      confirmLabel: 'Discard',
+    },
+  )
+}
+
+/** After `next(false)` in onBeforeRouteLeave when dirty; always shows discard dialog then runs `perform`. */
+function promptDiscardThenNavigate(perform: () => void) {
+  requestModalClose(() => {
+    allowNextUnsavedBypass.value = true
+    perform()
+  }, {
+    isDirty: () => true,
+    title: 'Discard telemetry changes?',
+    message: 'You have unsaved changes to this telemetry. Discard them?',
+    confirmLabel: 'Discard',
+  })
+}
+
+defineExpose({
+  isTelemetryFormDirty,
+  consumeNextUnsavedBypass,
+  promptDiscardThenNavigate,
 })
 
 const nameFieldClass = computed(() => {
@@ -996,6 +1487,7 @@ async function loadServiceProviders() {
 
 onMounted(() => {
   void loadServiceProviders()
+  void loadCapabilities()
 })
 
 const tcpProviders = computed(() =>
@@ -1016,12 +1508,22 @@ const k8sCheckTypeOptions = computed(() => K8S_CHECK_TYPES.map((c) => ({ value: 
 const cliRunnerOptions = computed(() =>
   CLI_RUNNER_PRESETS.map((p) => ({
     value: p,
-    label: p === 'alpine' ? 'Alpine (stable 3.x)' : 'Ubuntu 24.04',
+    label:
+      p === 'toolkit'
+        ? 'Telemetry toolkit (kubectl, jq, apt, …)'
+        : p === 'alpine'
+          ? 'Alpine (stable 3.x)'
+          : 'Ubuntu 24.04',
   })),
 )
 const metricValueKindOptions = [
   { value: 'number', label: 'Numeric' },
   { value: 'text', label: 'Text (trimmed stdout)' },
+] as const
+
+const metricNumericValuePickOptions = [
+  { value: 'first', label: 'First number' },
+  { value: 'last', label: 'Last number' },
 ] as const
 
 const tcpProviderSelectOptions = computed(() =>
@@ -1033,6 +1535,11 @@ const promProviderSelectOptions = computed(() =>
 
 const livenessProviderSelectOptions = computed(() =>
   livenessProviders.value.map((p) => ({ value: p.id, label: `${p.name} (${p.provider_type})` })),
+)
+
+const hlctlProviders = computed(() => serviceProviders.value.filter((p) => p.provider_type === 'hlctl'))
+const hlctlProviderSelectOptions = computed(() =>
+  hlctlProviders.value.map((p) => ({ value: p.id, label: p.name })),
 )
 
 const selectedPromProvider = computed(() =>
@@ -1121,6 +1628,11 @@ onUnmounted(() => {
 
 const saving = ref(false)
 const testBusy = ref(false)
+const verifyAbortController = ref<AbortController | null>(null)
+
+function abortVerifyTest() {
+  verifyAbortController.value?.abort()
+}
 const formError = ref('')
 /** Fingerprint of the last successful full Verify (not “Test connectivity”). Save allowed only when it matches current probe inputs. */
 const lastSuccessVerifyFingerprint = ref<string | null>(null)
@@ -1153,9 +1665,44 @@ watch(adapter, (a, prev) => {
   if (prev != null && prev !== a) {
     clearVerifyPanelState()
   }
-  if (a === 'cli' && props.initial?.adapter !== 'cli') {
+  if ((a === 'cli' || a === 'hlctl') && props.initial?.adapter !== a) {
     cliFormMode.value = 'metric'
   }
+  if (!props.initial?.id) {
+    telemetryTimeoutMs.value = defaultTimeoutMsForAdapter(a)
+  }
+})
+
+watch(hlctlSpId, () => {
+  if (adapter.value === 'hlctl') clearVerifyPanelState()
+})
+
+watch(k8sUiMode, (m) => {
+  if (m === 'legacy') {
+    k8sJobEnvHintId.value = ''
+    k8sJobNodeSelectorHintId.value = ''
+    k8sContainerPrepHintId.value = ''
+    k8sProbeShellHintId.value = ''
+  }
+})
+
+watch(livenessSource, (s) => {
+  if (s !== 'kubernetes') {
+    k8sJobEnvHintId.value = ''
+    k8sJobNodeSelectorHintId.value = ''
+    k8sContainerPrepHintId.value = ''
+    k8sProbeShellHintId.value = ''
+  }
+})
+
+watch(cliFormMode, (m) => {
+  if (m === 'legacy') {
+    cliProbeShellHintId.value = ''
+  }
+})
+
+watch([k8sProbeEnvLines, cliProbeEnvLines, k8sJobNodeSelectorLines, cliJobNodeSelectorLines], () => {
+  clearVerifyPanelState()
 })
 
 function splitArgs(s: string) {
@@ -1202,7 +1749,7 @@ function loadInitial() {
       label_selector: '',
       cli_shell: '',
       container_prep: '',
-      runner: 'alpine',
+      runner: 'toolkit',
       parse_json: false,
     })
     cliFormMode.value = 'metric'
@@ -1211,7 +1758,7 @@ function loadInitial() {
       args: [],
       cli_shell: '',
       container_prep: '',
-      runner: 'alpine',
+      runner: 'toolkit',
       parse_json: false,
       execution_target: 'backend',
       cluster_id: '',
@@ -1219,6 +1766,7 @@ function loadInitial() {
     })
     Object.assign(cm, {
       value_kind: 'number',
+      numeric_value_pick: 'first',
       green_operator: 'gte',
       green_threshold: 0,
       yellow_operator: 'gte',
@@ -1241,11 +1789,41 @@ function loadInitial() {
       yellow_operator: 'gte',
       yellow_threshold: 0.5,
     })
+    k8sProbeEnvLines.value = ''
+    cliProbeEnvLines.value = ''
+    k8sJobNodeSelectorLines.value = ''
+    cliJobNodeSelectorLines.value = ''
+    k8sJobEnvHintId.value = ''
+    k8sJobNodeSelectorHintId.value = ''
+    k8sContainerPrepHintId.value = ''
+    k8sProbeShellHintId.value = ''
+    cliJobEnvHintId.value = ''
+    cliJobNodeSelectorHintId.value = ''
+    cliContainerPrepHintId.value = ''
+    cliProbeShellHintId.value = ''
+    hlctlSpId.value = ''
+    telemetryTimeoutMs.value = defaultTimeoutMsForAdapter('http')
     return
   }
   name.value = row.name
   displayName.value = row.display_name?.trim() || ''
   adapter.value = row.adapter
+  telemetryTimeoutMs.value =
+    typeof row.timeout_ms === 'number' && row.timeout_ms > 0
+      ? clampProbeTimeoutMs(row.timeout_ms)
+      : defaultTimeoutMsForAdapter(row.adapter)
+  k8sProbeEnvLines.value = ''
+  cliProbeEnvLines.value = ''
+  k8sJobNodeSelectorLines.value = ''
+  cliJobNodeSelectorLines.value = ''
+  k8sJobEnvHintId.value = ''
+  k8sJobNodeSelectorHintId.value = ''
+  k8sContainerPrepHintId.value = ''
+  k8sProbeShellHintId.value = ''
+  cliJobEnvHintId.value = ''
+  cliJobNodeSelectorHintId.value = ''
+  cliContainerPrepHintId.value = ''
+  cliProbeShellHintId.value = ''
   const c = row.config_json || {}
   const q = row.qos_thresholds || {}
   if (row.adapter === 'http') {
@@ -1268,10 +1846,10 @@ function loadInitial() {
   if (row.adapter === 'kubernetes') {
     const shell = String(c.cli_shell || '').trim() !== ''
     k8sUiMode.value = shell ? 'shell' : 'legacy'
-    const rawKr = String(c.runner || 'alpine').trim()
+    const rawKr = String(c.runner || 'toolkit').trim()
     const runnerVal = CLI_RUNNER_PRESETS.includes(rawKr as (typeof CLI_RUNNER_PRESETS)[number])
       ? (rawKr as (typeof CLI_RUNNER_PRESETS)[number])
-      : 'alpine'
+      : 'toolkit'
     Object.assign(k8s, {
       cluster_id: String(c.cluster_id || ''),
       k8s_version: String(c.k8s_version || '1.30'),
@@ -1284,7 +1862,25 @@ function loadInitial() {
       runner: runnerVal,
       parse_json: Boolean(c.parse_json),
     })
+    k8sProbeEnvLines.value = shell
+      ? formatProbeEnvLines(
+          typeof c.env === 'object' && c.env !== null && !Array.isArray(c.env)
+            ? (c.env as Record<string, string>)
+            : undefined,
+        )
+      : ''
+    k8sJobNodeSelectorLines.value = shell
+      ? formatNodeSelectorLines(
+          typeof c.node_selector === 'object' && c.node_selector !== null && !Array.isArray(c.node_selector)
+            ? (c.node_selector as Record<string, string>)
+            : undefined,
+        )
+      : ''
     if (shell) {
+      k8sJobEnvHintId.value = String(c.job_env_hint_id || '')
+      k8sJobNodeSelectorHintId.value = String(c.job_node_selector_hint_id || '')
+      k8sContainerPrepHintId.value = String(c.container_prep_hint_id || '')
+      k8sProbeShellHintId.value = String(c.probe_shell_hint_id || '')
       const vk = String(q.value_kind || 'number').toLowerCase()
       cm.value_kind = vk === 'text' ? 'text' : 'number'
       cm.green_operator = String(q.green_operator ?? (vk === 'text' ? 'eq' : 'gte'))
@@ -1293,6 +1889,12 @@ function loadInitial() {
       cm.yellow_threshold = Number(q.yellow_threshold ?? 0)
       cm.green_text = String(q.green_text ?? '')
       cm.yellow_text = String(q.yellow_text ?? '')
+      {
+        const pick = String((q as Record<string, unknown>).numeric_value_pick ?? 'first')
+          .toLowerCase()
+          .trim()
+        cm.numeric_value_pick = pick === 'last' ? 'last' : 'first'
+      }
     }
   }
   if (row.adapter === 'liveness') {
@@ -1305,10 +1907,10 @@ function loadInitial() {
           : {}
       const shell = String(inner.cli_shell || '').trim() !== ''
       k8sUiMode.value = shell ? 'shell' : 'legacy'
-      const rawKr = String(inner.runner || 'alpine').trim()
+      const rawKr = String(inner.runner || 'toolkit').trim()
       const runnerVal = CLI_RUNNER_PRESETS.includes(rawKr as (typeof CLI_RUNNER_PRESETS)[number])
         ? (rawKr as (typeof CLI_RUNNER_PRESETS)[number])
-        : 'alpine'
+        : 'toolkit'
       Object.assign(k8s, {
         cluster_id: String(inner.cluster_id || ''),
         k8s_version: String(inner.k8s_version || '1.30'),
@@ -1321,6 +1923,28 @@ function loadInitial() {
         runner: runnerVal,
         parse_json: Boolean(inner.parse_json),
       })
+      k8sProbeEnvLines.value = shell
+        ? formatProbeEnvLines(
+            typeof inner.env === 'object' && inner.env !== null && !Array.isArray(inner.env)
+              ? (inner.env as Record<string, string>)
+              : undefined,
+          )
+        : ''
+      k8sJobNodeSelectorLines.value = shell
+        ? formatNodeSelectorLines(
+            typeof inner.node_selector === 'object' &&
+              inner.node_selector !== null &&
+              !Array.isArray(inner.node_selector)
+              ? (inner.node_selector as Record<string, string>)
+              : undefined,
+          )
+        : ''
+      if (shell) {
+        k8sJobEnvHintId.value = String(inner.job_env_hint_id || '')
+        k8sJobNodeSelectorHintId.value = String(inner.job_node_selector_hint_id || '')
+        k8sContainerPrepHintId.value = String(inner.container_prep_hint_id || '')
+        k8sProbeShellHintId.value = String(inner.probe_shell_hint_id || '')
+      }
       livenessSpId.value = ''
       livenessAfDownloadPath.value = ''
       livenessAfMaxBytesStr.value = ''
@@ -1339,11 +1963,12 @@ function loadInitial() {
       }
     }
   }
-  if (row.adapter === 'cli') {
-    const rawRunner = String(c.runner || 'alpine').trim()
+  if (row.adapter === 'cli' || row.adapter === 'hlctl') {
+    hlctlSpId.value = row.adapter === 'hlctl' ? String(c.service_provider_id || '') : ''
+    const rawRunner = String(c.runner || 'toolkit').trim()
     const runnerVal = CLI_RUNNER_PRESETS.includes(rawRunner as (typeof CLI_RUNNER_PRESETS)[number])
       ? (rawRunner as (typeof CLI_RUNNER_PRESETS)[number])
-      : 'alpine'
+      : 'toolkit'
     const hasLegacyQos =
       String(q.green_command || '').trim() !== '' &&
       String(q.yellow_command || '').trim() !== '' &&
@@ -1360,6 +1985,20 @@ function loadInitial() {
       runner: runnerVal,
       cli_shell: typeof c.cli_shell === 'string' ? c.cli_shell : '',
     })
+    cliProbeEnvLines.value = formatProbeEnvLines(
+      typeof c.env === 'object' && c.env !== null && !Array.isArray(c.env)
+        ? (c.env as Record<string, string>)
+        : undefined,
+    )
+    cliJobNodeSelectorLines.value = formatNodeSelectorLines(
+      typeof c.node_selector === 'object' && c.node_selector !== null && !Array.isArray(c.node_selector)
+        ? (c.node_selector as Record<string, string>)
+        : undefined,
+    )
+    cliJobEnvHintId.value = String(c.job_env_hint_id || '')
+    cliJobNodeSelectorHintId.value = String(c.job_node_selector_hint_id || '')
+    cliContainerPrepHintId.value = String(c.container_prep_hint_id || '')
+    cliProbeShellHintId.value = String(c.probe_shell_hint_id || '')
     cli.args = Array.isArray(c.args) ? (c.args as string[]) : []
     if (cliFormMode.value === 'metric') {
       const vk = String(q.value_kind || 'number').toLowerCase()
@@ -1370,6 +2009,12 @@ function loadInitial() {
       cm.yellow_threshold = Number(q.yellow_threshold ?? 0)
       cm.green_text = String(q.green_text ?? '')
       cm.yellow_text = String(q.yellow_text ?? '')
+      {
+        const pick = String((q as Record<string, unknown>).numeric_value_pick ?? 'first')
+          .toLowerCase()
+          .trim()
+        cm.numeric_value_pick = pick === 'last' ? 'last' : 'first'
+      }
     }
   }
   if (row.adapter === 'http' || (row.adapter === 'kubernetes' && k8sUiMode.value === 'legacy')) {
@@ -1425,7 +2070,7 @@ function loadInitial() {
       livenessValueQosEnabled.value = true
     }
   }
-  if (row.adapter === 'cli') {
+  if (row.adapter === 'cli' || row.adapter === 'hlctl') {
     if (cliFormMode.value === 'legacy') {
       cq.green_command = String(q.green_command || '')
       cq.yellow_command = String(q.yellow_command || '')
@@ -1440,7 +2085,16 @@ function loadInitial() {
   }
 }
 
-watch(() => props.initial, loadInitial, { immediate: true })
+watch(
+  () => props.initial,
+  () => {
+    loadInitial()
+    void nextTick(() => {
+      formSnapshotBaseline.value = captureBaselineSnapshot()
+    })
+  },
+  { immediate: true },
+)
 
 function buildConfig(): Record<string, unknown> {
   switch (adapter.value) {
@@ -1470,6 +2124,16 @@ function buildConfig(): Record<string, unknown> {
           runner: k8s.runner,
         }
         if (prep) base.container_prep = prep
+        const envK = probeEnvPayload(k8sProbeEnvLines.value)
+        if (envK) base.env = envK
+        const nsK = probeNodeSelectorPayload(k8sJobNodeSelectorLines.value)
+        if (nsK) base.node_selector = nsK
+        attachShellHintIds(base, {
+          job_env_hint_id: k8sJobEnvHintId.value,
+          job_node_selector_hint_id: k8sJobNodeSelectorHintId.value,
+          container_prep_hint_id: k8sContainerPrepHintId.value,
+          probe_shell_hint_id: k8sProbeShellHintId.value,
+        })
         return base
       }
       return {
@@ -1492,6 +2156,16 @@ function buildConfig(): Record<string, unknown> {
             runner: k8s.runner,
           }
           if (prep) nest.container_prep = prep
+          const envK = probeEnvPayload(k8sProbeEnvLines.value)
+          if (envK) nest.env = envK
+          const nsK = probeNodeSelectorPayload(k8sJobNodeSelectorLines.value)
+          if (nsK) nest.node_selector = nsK
+          attachShellHintIds(nest, {
+            job_env_hint_id: k8sJobEnvHintId.value,
+            job_node_selector_hint_id: k8sJobNodeSelectorHintId.value,
+            container_prep_hint_id: k8sContainerPrepHintId.value,
+            probe_shell_hint_id: k8sProbeShellHintId.value,
+          })
           return { source: 'kubernetes', kubernetes: nest }
         }
         return {
@@ -1539,6 +2213,16 @@ function buildConfig(): Record<string, unknown> {
           base.cluster_id = cli.cluster_id.trim()
           base.k8s_version = cli.k8s_version
         }
+        const envC = probeEnvPayload(cliProbeEnvLines.value)
+        if (envC) base.env = envC
+        const nsC = probeNodeSelectorPayload(cliJobNodeSelectorLines.value)
+        if (nsC) base.node_selector = nsC
+        attachShellHintIds(base, {
+          job_env_hint_id: cliJobEnvHintId.value,
+          job_node_selector_hint_id: cliJobNodeSelectorHintId.value,
+          container_prep_hint_id: cliContainerPrepHintId.value,
+          probe_shell_hint_id: cliProbeShellHintId.value,
+        })
         return base
       }
       const base: Record<string, unknown> = {
@@ -1553,6 +2237,52 @@ function buildConfig(): Record<string, unknown> {
         base.cluster_id = cli.cluster_id.trim()
         base.k8s_version = cli.k8s_version
       }
+      const envC = probeEnvPayload(cliProbeEnvLines.value)
+      if (envC) base.env = envC
+      const nsC = probeNodeSelectorPayload(cliJobNodeSelectorLines.value)
+      if (nsC) base.node_selector = nsC
+      attachShellHintIds(base, {
+        job_env_hint_id: cliJobEnvHintId.value,
+        job_node_selector_hint_id: cliJobNodeSelectorHintId.value,
+        container_prep_hint_id: cliContainerPrepHintId.value,
+        probe_shell_hint_id: cliProbeShellHintId.value,
+      })
+      return base
+    }
+    case 'hlctl': {
+      const prep = cli.container_prep.trim()
+      if (cliFormMode.value === 'metric') {
+        const base: Record<string, unknown> = {
+          service_provider_id: hlctlSpId.value.trim(),
+          cli_shell: cli.cli_shell.trim(),
+          parse_json: cli.parse_json,
+        }
+        if (prep) base.container_prep = prep
+        const envC = probeEnvPayload(cliProbeEnvLines.value)
+        if (envC) base.env = envC
+        attachShellHintIds(base, {
+          job_env_hint_id: cliJobEnvHintId.value,
+          job_node_selector_hint_id: '',
+          container_prep_hint_id: cliContainerPrepHintId.value,
+          probe_shell_hint_id: cliProbeShellHintId.value,
+        })
+        return base
+      }
+      const base: Record<string, unknown> = {
+        service_provider_id: hlctlSpId.value.trim(),
+        command: cq.green_command.trim(),
+        args: splitArgs(cqGreenArgs.value),
+        parse_json: cli.parse_json,
+      }
+      if (prep) base.container_prep = prep
+      const envC = probeEnvPayload(cliProbeEnvLines.value)
+      if (envC) base.env = envC
+      attachShellHintIds(base, {
+        job_env_hint_id: cliJobEnvHintId.value,
+        job_node_selector_hint_id: '',
+        container_prep_hint_id: cliContainerPrepHintId.value,
+        probe_shell_hint_id: cliProbeShellHintId.value,
+      })
       return base
     }
     default:
@@ -1570,13 +2300,17 @@ function buildQos(): Record<string, unknown> {
   }
   if (adapter.value === 'kubernetes' && k8sUiMode.value === 'shell') {
     if (cm.value_kind === 'number') {
-      return {
+      const out: Record<string, unknown> = {
         value_kind: 'number',
         green_operator: cm.green_operator,
         green_threshold: cm.green_threshold,
         yellow_operator: cm.yellow_operator,
         yellow_threshold: cm.yellow_threshold,
       }
+      if (cm.numeric_value_pick === 'last') {
+        out.numeric_value_pick = 'last'
+      }
+      return out
     }
     return {
       value_kind: 'text',
@@ -1614,16 +2348,20 @@ function buildQos(): Record<string, unknown> {
       yellow_threshold: pq.yellow_threshold,
     }
   }
-  if (adapter.value === 'cli') {
+  if (adapter.value === 'cli' || adapter.value === 'hlctl') {
     if (cliFormMode.value === 'metric') {
       if (cm.value_kind === 'number') {
-        return {
+        const out: Record<string, unknown> = {
           value_kind: 'number',
           green_operator: cm.green_operator,
           green_threshold: cm.green_threshold,
           yellow_operator: cm.yellow_operator,
           yellow_threshold: cm.yellow_threshold,
         }
+        if (cm.numeric_value_pick === 'last') {
+          out.numeric_value_pick = 'last'
+        }
+        return out
       }
       return {
         value_kind: 'text',
@@ -1651,6 +2389,7 @@ function executionTarget(): ExecutionTarget {
     return livenessSource.value === 'kubernetes' ? 'k8s_cluster' : 'backend'
   }
   if (adapter.value === 'http' || adapter.value === 'prometheus') return 'backend'
+  if (adapter.value === 'hlctl') return 'backend'
   return cli.execution_target
 }
 
@@ -1661,6 +2400,12 @@ function validateLocal(): string {
     if (nameAvail.value === 'loading') return 'Checking whether this name is available…'
     if (nameAvail.value === 'taken') return 'This name is already in use'
     if (nameAvail.value === 'error') return 'Could not verify name availability; try again'
+  }
+  {
+    const n = Number(telemetryTimeoutMs.value)
+    if (!Number.isFinite(n) || n < PROBE_TIMEOUT_MS_MIN || n > PROBE_TIMEOUT_MS_MAX) {
+      return `Probe timeout must be between ${PROBE_TIMEOUT_MS_MIN} and ${PROBE_TIMEOUT_MS_MAX} ms`
+    }
   }
   if (adapter.value === 'http') {
     if (!http.service_provider_id.trim()) return 'Select an HTTP source (TCP service provider)'
@@ -1683,6 +2428,12 @@ function validateLocal(): string {
       } else if (!cm.green_operator || !cm.yellow_operator) {
         return 'Kubernetes text QoS requires green and yellow operators'
       }
+      const ke = parseProbeEnvLines(k8sProbeEnvLines.value)
+      if (!ke.ok) return ke.error
+      if (Object.keys(ke.env).length > 32) return 'Job environment: at most 32 variables'
+      const kn = parseNodeSelectorLines(k8sJobNodeSelectorLines.value)
+      if (!kn.ok) return kn.error
+      if (Object.keys(kn.node_selector).length > 16) return 'Job node selector: at most 16 keys'
     } else if (k8s.check_type === 'deployment_ready' && !k8s.resource_name.trim()) {
       return 'Deployment name required'
     }
@@ -1694,6 +2445,12 @@ function validateLocal(): string {
       if (!k8s.cluster_id.trim()) return 'Select a cluster'
       if (k8sUiMode.value === 'shell') {
         if (!k8s.cli_shell.trim()) return 'Probe shell is required for liveness Kubernetes shell mode'
+        const ke = parseProbeEnvLines(k8sProbeEnvLines.value)
+        if (!ke.ok) return ke.error
+        if (Object.keys(ke.env).length > 32) return 'Job environment: at most 32 variables'
+        const kn = parseNodeSelectorLines(k8sJobNodeSelectorLines.value)
+        if (!kn.ok) return kn.error
+        if (Object.keys(kn.node_selector).length > 16) return 'Job node selector: at most 16 keys'
       } else if (k8s.check_type === 'deployment_ready' && !k8s.resource_name.trim()) {
         return 'Deployment name required'
       }
@@ -1730,6 +2487,12 @@ function validateLocal(): string {
     }
   }
   if (adapter.value === 'cli') {
+    const ce = parseProbeEnvLines(cliProbeEnvLines.value)
+    if (!ce.ok) return ce.error
+    if (Object.keys(ce.env).length > 32) return 'CLI environment: at most 32 variables'
+    const cn = parseNodeSelectorLines(cliJobNodeSelectorLines.value)
+    if (!cn.ok) return cn.error
+    if (Object.keys(cn.node_selector).length > 16) return 'CLI node selector: at most 16 keys'
     if (cli.execution_target === 'k8s_cluster') {
       const allowed = K8S_VERSIONS as readonly string[]
       if (!allowed.includes(cli.k8s_version)) return 'Pick a supported K8s version for CLI'
@@ -1748,6 +2511,26 @@ function validateLocal(): string {
       }
     } else if (!cq.green_command.trim() || !cq.yellow_command.trim() || !cq.red_command.trim()) {
       return 'Legacy CLI QoS: all three commands required (or switch to metric shell QoS)'
+    }
+  }
+  if (adapter.value === 'hlctl') {
+    if (!hlctlSpId.value.trim()) return 'Select an HLCTL service provider'
+    const ce = parseProbeEnvLines(cliProbeEnvLines.value)
+    if (!ce.ok) return ce.error
+    if (Object.keys(ce.env).length > 32) return 'HLCTL environment: at most 32 variables'
+    if (cliFormMode.value === 'metric') {
+      if (!cli.cli_shell.trim()) return 'Probe shell (cli_shell) is required for metric HLCTL QoS'
+      if (cm.value_kind === 'number') {
+        if (!cm.green_operator || !cm.yellow_operator) {
+          return 'Numeric HLCTL QoS requires green and yellow operators'
+        }
+      } else {
+        if (!cm.green_operator || !cm.yellow_operator) {
+          return 'Text HLCTL QoS requires green and yellow operators'
+        }
+      }
+    } else if (!cq.green_command.trim() || !cq.yellow_command.trim() || !cq.red_command.trim()) {
+      return 'Legacy HLCTL QoS: all three commands required (or switch to metric shell QoS)'
     }
   }
   if (
@@ -1782,10 +2565,21 @@ function validateLocal(): string {
   return ''
 }
 
+/** Probe timeout for Verify (clamped to backend max, see probeTestContextTimeout). */
+function probeTimeoutMsForVerify(): number {
+  return clampProbeTimeoutMs(Number(telemetryTimeoutMs.value))
+}
+
 function buildProbeTestBody(payload: Record<string, unknown>): Record<string, unknown> {
+  const cfgRaw = buildConfig()
+  const cfg =
+    typeof cfgRaw === 'object' && cfgRaw !== null && !Array.isArray(cfgRaw)
+      ? { ...(cfgRaw as Record<string, unknown>) }
+      : {}
+  cfg.timeout_ms = probeTimeoutMsForVerify()
   const body: Record<string, unknown> = {
     adapter: adapter.value,
-    config_json: buildConfig(),
+    config_json: cfg,
     qos_thresholds: buildQos(),
     execution_target: executionTarget(),
   }
@@ -1834,12 +2628,20 @@ async function runTest(payload: Record<string, unknown>) {
     }
   }
   testBusy.value = true
+  verifyAbortController.value = new AbortController()
+  const signal = verifyAbortController.value.signal
   try {
     const body = buildProbeTestBody(payload)
-    const res = (await props.apiFetch('/api/admin/probes/test', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })) as Record<string, unknown>
+    testRef.value?.clearStream?.()
+    const res = (await postProbeTestStream(
+      JSON.stringify(body),
+      {
+        onHost: (meta) => testRef.value?.setStreamHost?.(meta),
+        onLog: (stream, chunk) => testRef.value?.appendStreamLog?.(stream, chunk),
+        onHeartbeat: () => testRef.value?.markStreamHeartbeat?.(),
+      },
+      { signal },
+    )) as Record<string, unknown>
     testRef.value?.setResult(res)
     const connectOnly = Boolean(payload.test_connect_only)
     if (!connectOnly) {
@@ -1860,9 +2662,19 @@ async function runTest(payload: Record<string, unknown>) {
       }
     }
   } catch (e: unknown) {
+    if (e instanceof ProbeStreamAbortedError) {
+      testRef.value?.setResult({
+        success: false,
+        operational_ok: false,
+        error: 'Verify cancelled',
+      })
+      if (!payload.test_connect_only) lastSuccessVerifyFingerprint.value = null
+      return
+    }
     testRef.value?.setResult({ success: false, error: e instanceof Error ? e.message : 'Test failed' })
     if (!payload.test_connect_only) lastSuccessVerifyFingerprint.value = null
   } finally {
+    verifyAbortController.value = null
     testBusy.value = false
   }
 }
@@ -1887,7 +2699,7 @@ async function submit() {
       config_json: buildConfig(),
       qos_thresholds: buildQos(),
       execution_target: executionTarget(),
-      timeout_ms: adapter.value === 'cli' ? 60000 : 30000,
+      timeout_ms: clampProbeTimeoutMs(Number(telemetryTimeoutMs.value)),
       retries: 1,
     }
     const existingId = props.initial?.id?.trim()
@@ -1899,8 +2711,9 @@ async function submit() {
     } else {
       await props.apiFetch('/api/admin/telemetry', { method: 'POST', body: JSON.stringify(payload) })
     }
+    // So @saved navigation (e.g. to list) is not blocked by onBeforeRouteLeave dirty guard.
+    formSnapshotBaseline.value = captureBaselineSnapshot()
     emit('saved')
-    emit('close')
   } catch (e: unknown) {
     const apiErr = (e as { data?: { error?: string } })?.data?.error
     formError.value = apiErr || (e instanceof Error ? e.message : 'Save failed')
@@ -1911,6 +2724,61 @@ async function submit() {
 </script>
 
 <style scoped>
+.telemetry-editor-page {
+  width: 100%;
+  padding-bottom: 32px;
+  /* Match admin main / body canvas so sticky footer does not read as a white card */
+  background: var(--color-canvas, var(--admin-main-bg, #f9fafb));
+}
+.telemetry-editor-page__header {
+  margin-bottom: 20px;
+}
+.telemetry-editor-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 6px 12px 6px 8px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.telemetry-editor-back:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+.telemetry-editor-page__title {
+  margin-bottom: 0;
+}
+.telemetry-editor-form {
+  gap: 0;
+  background: transparent;
+}
+.telemetry-editor-form__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.telemetry-editor-form__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex-shrink: 0;
+  margin-top: 16px;
+  margin-bottom: 0;
+  padding-top: 16px;
+  padding-bottom: 8px;
+  background-color: #f9fafb;
+  background: var(--color-canvas, var(--admin-main-bg, #f9fafb));
+  border-top: 1px solid var(--color-border);
+  box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.04);
+}
 .form-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .form-row .form-group { flex: 1; min-width: 140px; }
 .form-row--triple .form-group { flex: 1 1 0; min-width: 7rem; }
@@ -1927,14 +2795,14 @@ async function submit() {
 .form-input--name-warn { border-color: #d97706; }
 .btn-save { font-weight: 600; }
 .btn-save--ready {
-  background: #15803d;
+  background: var(--color-primary);
   color: #fff;
-  border-color: #166534;
+  border-color: var(--color-primary);
   cursor: pointer;
 }
 .btn-save--ready:hover:not(:disabled) {
-  background: #166534;
-  border-color: #14532d;
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
 .btn-save--locked {
   background: #e5e7eb;
@@ -1974,4 +2842,27 @@ async function submit() {
   50% { filter: brightness(1.12); }
 }
 .hint-only { padding: 4px 0; }
+.telemetry-shell-hint-label-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.telemetry-shell-hint-label-row .form-label {
+  margin-bottom: 0;
+}
+</style>
+
+<!-- Unscoped: win over global .modal-actions / form defaults so sticky bar matches admin canvas -->
+<style>
+.telemetry-editor-form__actions.modal-actions {
+  background-color: #f9fafb !important;
+  background-image: linear-gradient(
+    to bottom,
+    var(--color-canvas, #f9fafb),
+    var(--color-canvas, #f9fafb)
+  );
+}
 </style>

@@ -113,7 +113,7 @@ func (h *K8sClustersHandler) GenerateOnboardingToken(w http.ResponseWriter, r *h
 		return
 	}
 
-	cluster, err := h.store.GetK8sClusterByID(r.Context(), id)
+	_, err = h.store.GetK8sClusterByID(r.Context(), id)
 	if err != nil {
 		handler.WriteError(w, http.StatusNotFound, "cluster not found")
 		return
@@ -125,7 +125,7 @@ func (h *K8sClustersHandler) GenerateOnboardingToken(w http.ResponseWriter, r *h
 		return
 	}
 
-	manifest := generateOnboardingManifest(cluster.Name, id.String(), ht.Token, h.externalURL)
+	manifest := generateOnboardingManifest(id.String(), ht.Token, h.externalURL)
 
 	userID, _ := auth.UserIDFromContext(r.Context())
 	_ = h.store.CreateAuditLog(r.Context(), &userID, "generate_onboarding_token", "k8s_cluster", &id, nil, r.RemoteAddr)
@@ -270,6 +270,15 @@ func (h *K8sClustersHandler) VerifyConnectivity(w http.ResponseWriter, r *http.R
 	handler.WriteJSON(w, http.StatusOK, res)
 }
 
+// ShellProbeRBACManifest returns Namespace, ServiceAccount, ClusterRole, and ClusterRoleBinding required for
+// in-cluster telemetry Jobs (shell-on-cluster). Manual token registration skips the onboarding Job, so clusters
+// may need this manifest applied once. Same documents are embedded in the full onboarding manifest.
+func (h *K8sClustersHandler) ShellProbeRBACManifest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(generateShellProbeRBACManifest()))
+}
+
 // onboardingJobSuffix makes a unique, DNS-safe Job name suffix from the handshake token (immutable Job spec).
 func onboardingJobSuffix(token string) string {
 	if len(token) < 8 {
@@ -293,9 +302,7 @@ kubectl delete job devops-status-register -n devops-status-system --ignore-not-f
 `
 }
 
-func generateOnboardingManifest(_ string, clusterID, token, externalURL string) string {
-	jobName := "devops-status-register-" + onboardingJobSuffix(token)
-	baseURL := normalizeExternalURLForOnboarding(externalURL)
+func generateShellProbeRBACManifest() string {
 	return `---
 apiVersion: v1
 kind: Namespace
@@ -335,7 +342,13 @@ roleRef:
   kind: ClusterRole
   name: devops-status-agent
   apiGroup: rbac.authorization.k8s.io
----
+`
+}
+
+func generateOnboardingManifest(clusterID, token, externalURL string) string {
+	jobName := "devops-status-register-" + onboardingJobSuffix(token)
+	baseURL := normalizeExternalURLForOnboarding(externalURL)
+	return generateShellProbeRBACManifest() + `---
 apiVersion: batch/v1
 kind: Job
 metadata:

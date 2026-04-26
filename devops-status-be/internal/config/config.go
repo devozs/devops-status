@@ -18,9 +18,10 @@ type Config struct {
 	ExternalURL          string
 	FrontendURL          string
 	K8SInsecureSkipTLS   bool
-	CLIRunnerImage       string
-	CLIRunnerImageAlpine string
-	CLIRunnerImageUbuntu string
+	CLIRunnerImage        string
+	CLIRunnerImageAlpine  string
+	CLIRunnerImageUbuntu  string
+	CLIRunnerImageToolkit string
 	CLIBackendExecutor   string // docker | k8s
 	CLIDockerNetwork     string
 	CLIBackendK8sCluster string // UUID of cluster used when CLIBackendExecutor=k8s
@@ -38,6 +39,7 @@ func Load() *Config {
 	legacy := getEnv("CLI_RUNNER_IMAGE", "alpine:3.20")
 	alpineImg := getEnv("CLI_RUNNER_IMAGE_ALPINE", legacy)
 	ubuntuImg := getEnv("CLI_RUNNER_IMAGE_UBUNTU_24", "ubuntu:24.04")
+	toolkitImg := strings.TrimSpace(getEnv("CLI_RUNNER_IMAGE_TOOLKIT", ""))
 	return &Config{
 		Port:                 getEnv("PORT", "8080"),
 		DatabaseURL:          getEnv("DATABASE_URL", "postgres://devops:devops_local@localhost:5432/devops_status?sslmode=disable"),
@@ -47,9 +49,10 @@ func Load() *Config {
 		ExternalURL:          getEnv("EXTERNAL_URL", "http://localhost:8080"),
 		FrontendURL:          getEnv("FRONTEND_URL", "http://localhost:3000"),
 		K8SInsecureSkipTLS:   envBool("K8S_INSECURE_SKIP_TLS_VERIFY", false),
-		CLIRunnerImage:       legacy,
-		CLIRunnerImageAlpine: alpineImg,
-		CLIRunnerImageUbuntu: ubuntuImg,
+		CLIRunnerImage:        legacy,
+		CLIRunnerImageAlpine:  alpineImg,
+		CLIRunnerImageUbuntu:  ubuntuImg,
+		CLIRunnerImageToolkit: toolkitImg,
 		CLIBackendExecutor:   strings.ToLower(strings.TrimSpace(getEnv("CLI_BACKEND_EXECUTOR", "docker"))),
 		CLIDockerNetwork:     getEnv("CLI_DOCKER_NETWORK", "bridge"),
 		CLIBackendK8sCluster: strings.TrimSpace(getEnv("CLI_BACKEND_K8S_CLUSTER_ID", "")),

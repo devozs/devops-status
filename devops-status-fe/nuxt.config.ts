@@ -3,12 +3,17 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
 
   runtimeConfig: {
+    /**
+     * Server-only: in-cluster backend base URL for SSR fetches (see useApi).
+     * Override with NUXT_API_BASE_INTERNAL in production so Nitro does not call the public ingress URL from inside the pod.
+     */
+    apiBaseInternal: '',
     public: {
       apiBase: '',
     },
   },
 
-  css: ['~/assets/css/main.css', '~/assets/css/form-controls.css'],
+  css: ['~/assets/css/main.css', '~/assets/css/form-controls.css', '~/assets/css/admin-shared.css'],
 
   app: {
     head: {

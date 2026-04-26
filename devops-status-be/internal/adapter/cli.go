@@ -26,11 +26,12 @@ type CLIConfig struct {
 	Command         string            `json:"command"`
 	Args            []string          `json:"args,omitempty"`
 	Env             map[string]string `json:"env,omitempty"`
+	NodeSelector    map[string]string `json:"node_selector,omitempty"`
 	TimeoutMs       int               `json:"timeout_ms,omitempty"`
 	ParseJSON       bool              `json:"parse_json,omitempty"`
 	SuccessExit     int               `json:"success_exit,omitempty"`
 	ContainerPrep   string            `json:"container_prep,omitempty"`
-	Runner          string            `json:"runner,omitempty"`       // alpine | ubuntu_24
+	Runner          string            `json:"runner,omitempty"`       // alpine | ubuntu_24 | toolkit
 	RunnerImage     string            `json:"runner_image,omitempty"` // optional; must match server allowlist
 	ExecutionTarget string            `json:"execution_target,omitempty"` // backend | k8s_cluster
 	ClusterID       string            `json:"cluster_id,omitempty"`
@@ -40,6 +41,11 @@ type CLIConfig struct {
 	InsecureSkipTLS bool              `json:"insecure_skip_tls,omitempty"`
 	// CLIShell is arbitrary shell (metric QoS mode). When set, allowlist is skipped and this runs after container_prep.
 	CLIShell string `json:"cli_shell,omitempty"`
+	// Optional admin UI: links to telemetry_shell_hints rows (validated on save).
+	JobEnvHintID          string `json:"job_env_hint_id,omitempty"`
+	JobNodeSelectorHintID string `json:"job_node_selector_hint_id,omitempty"`
+	ContainerPrepHintID   string `json:"container_prep_hint_id,omitempty"`
+	ProbeShellHintID      string `json:"probe_shell_hint_id,omitempty"`
 }
 
 type CLITimestampedStep struct {

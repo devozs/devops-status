@@ -272,7 +272,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		}
 	}
 
-	if (job.Adapter == "cli" || job.Adapter == "kubernetes") && shellMetric {
+	if (job.Adapter == "cli" || job.Adapter == "kubernetes" || job.Adapter == "hlctl") && shellMetric {
 		result, err = adapter.RunCLIMetricShellProbe(probeCtx, a, cfgJSON, job.QosThresholds)
 	} else if job.Adapter == "liveness" && livenessShellMetric {
 		ka, kerr := adapter.Get("kubernetes")
@@ -281,7 +281,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		} else {
 			result, err = adapter.RunCLIMetricShellProbe(probeCtx, ka, livenessInner, livenessSynQos)
 		}
-	} else if job.Adapter == "cli" && adapter.HasCLIPQoSThresholds(job.QosThresholds) {
+	} else if (job.Adapter == "cli" || job.Adapter == "hlctl") && adapter.HasCLIPQoSThresholds(job.QosThresholds) {
 		result, err = adapter.RunCLIPQoSProbe(probeCtx, a, cfgJSON, job.QosThresholds)
 	}
 	if result == nil {
@@ -301,7 +301,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 	if job.Adapter == "liveness" && livenessShellMetric {
 		qosForNumberKind = livenessSynQos
 	}
-	if (job.Adapter == "cli" || job.Adapter == "kubernetes") && shellMetric && adapter.CLIMetricValueKind(job.QosThresholds) == "number" {
+	if (job.Adapter == "cli" || job.Adapter == "kubernetes" || job.Adapter == "hlctl") && shellMetric && adapter.CLIMetricValueKind(job.QosThresholds) == "number" {
 		if result.Success {
 			v := result.RawValue
 			rawVal = &v
@@ -338,9 +338,6 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 		return
 	}
 
-	emptyQos := json.RawMessage(`{}`)
-	sc.evaluator.Evaluate(ctx, job.TargetType, job.TargetID, "operational", job.WindowSize, job.FailuresDown, job.SuccessUp, job.Adapter, emptyQos, &tid)
-
 	if hasQoSBytes(job.QosThresholds) && result.Success {
 		meta := cloneMetadata(result.Metadata)
 		if lvl := adapter.QoSLevelFromProbe(job.Adapter, job.QosThresholds, result, true); lvl != "" {
@@ -365,6 +362,7 @@ func (sc *Scheduler) executeProbe(ctx context.Context, job ProbeJob) {
 			slog.Error("store qos sample", "error", err)
 			return
 		}
-		sc.evaluator.Evaluate(ctx, job.TargetType, job.TargetID, "qos", job.WindowSize, job.FailuresDown, job.SuccessUp, job.Adapter, job.QosThresholds, &tid)
 	}
+
+	sc.evaluator.EvaluateTargetAfterProbe(ctx, job.TargetType, job.TargetID)
 }

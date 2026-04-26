@@ -55,8 +55,10 @@ func (s *Server) routes() http.Handler {
 		r.Get("/services", statusH.ListServices)
 		r.Get("/environments", statusH.ListEnvironments)
 		r.Get("/environments/{slug}/telemetry-breakdown", statusH.EnvironmentTelemetryBreakdown)
+		r.Get("/environments/{slug}/telemetry-samples", statusH.EnvironmentTelemetrySamples)
 		r.Get("/environments/{slug}/topology", statusH.EnvironmentTopology)
 		r.Get("/services/{slug}/telemetry-breakdown", statusH.ServiceTelemetryBreakdown)
+		r.Get("/services/{slug}/telemetry-samples", statusH.ServiceTelemetrySamples)
 		r.Get("/services/{slug}/topology", statusH.ServiceTopology)
 		r.Get("/services/{slug}/history", historyH.ServiceHistory)
 		r.Get("/environments/{slug}/history", historyH.EnvironmentHistory)
@@ -69,107 +71,128 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/admin/k8s-clusters/{id}/register", k8sH.RegisterCallback)
 	r.Post("/api/admin/k8s-clusters/{id}/heartbeat", k8sH.Heartbeat)
 
-	// Admin auth (no session required for login)
 	authH := adminhandler.NewAuthHandler(s.store, s.session)
-	r.Post("/api/admin/auth/login", authH.Login)
+	metaH := adminhandler.NewMetaHandler(s.cfg.ExternalURL, s.cfg.IsDev())
 
-	// Admin API (session required)
+	// /api/admin: login + public meta (CSRF cookie) first; then session + CSRF for the rest.
 	r.Route("/api/admin", func(r chi.Router) {
-		r.Use(middleware.RequireAuth(s.session))
-		r.Use(middleware.RequireRole("admin"))
+		r.Post("/auth/login", authH.Login)
 
-		if !s.cfg.IsDev() {
-			r.Use(middleware.CSRFProtection)
-		}
-
-		r.Post("/auth/logout", authH.Logout)
-		r.Get("/auth/me", authH.Me)
-
-		metaH := adminhandler.NewMetaHandler(s.cfg.ExternalURL, s.cfg.IsDev())
-		r.Get("/meta", metaH.Get)
-
-		// Service providers
-		spH := adminhandler.NewServiceProvidersHandler(s.store, s.secret)
-		r.Route("/service-providers", func(r chi.Router) {
-			r.Get("/check-name", spH.CheckNameAvailable)
-			r.Post("/verify", spH.VerifyReachability)
-			r.Get("/", spH.List)
-			r.Post("/", spH.Create)
-			r.Get("/{id}", spH.Get)
-			r.Put("/{id}", spH.Update)
-			r.Delete("/{id}", spH.Delete)
+		r.Group(func(r chi.Router) {
+			if !s.cfg.IsDev() {
+				r.Use(middleware.CSRFProtection)
+			}
+			r.Get("/meta", metaH.Get)
 		})
 
-		// Services CRUD
-		svcH := adminhandler.NewServicesHandler(s.store)
-		r.Route("/services", func(r chi.Router) {
-			r.Get("/", svcH.List)
-			r.Get("/check-slug", svcH.CheckSlugAvailable)
-			r.Post("/", svcH.Create)
-			r.Post("/{id}/telemetry-links", svcH.CreateTelemetryLink)
-			r.Patch("/{id}/telemetry-links/{linkId}", svcH.PatchTelemetryLink)
-			r.Delete("/{id}/telemetry-links/{linkId}", svcH.DeleteTelemetryLink)
-			r.Get("/{id}/telemetry-samples", svcH.ListTelemetrySamples)
-			r.Get("/{id}/topology", svcH.Topology)
-			r.Get("/{id}", svcH.Get)
-			r.Put("/{id}", svcH.Update)
-			r.Delete("/{id}", svcH.Delete)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireAuth(s.session))
+			r.Use(middleware.RequireRole("admin"))
+
+			if !s.cfg.IsDev() {
+				r.Use(middleware.CSRFProtection)
+			}
+
+			r.Post("/auth/logout", authH.Logout)
+			r.Get("/auth/me", authH.Me)
+
+			capH := adminhandler.NewCapabilitiesHandler(s.hlctlEnabled)
+			r.Get("/capabilities", capH.Get)
+
+			// Service providers
+			spH := adminhandler.NewServiceProvidersHandler(s.store, s.secret, s.hlctlEnabled, s.cfg)
+			r.Route("/service-providers", func(r chi.Router) {
+				r.Get("/check-name", spH.CheckNameAvailable)
+				r.Post("/verify", spH.VerifyReachability)
+				r.Get("/", spH.List)
+				r.Post("/", spH.Create)
+				r.Get("/{id}", spH.Get)
+				r.Put("/{id}", spH.Update)
+				r.Delete("/{id}", spH.Delete)
+			})
+
+			// Services CRUD
+			svcH := adminhandler.NewServicesHandler(s.store)
+			r.Route("/services", func(r chi.Router) {
+				r.Get("/", svcH.List)
+				r.Get("/check-slug", svcH.CheckSlugAvailable)
+				r.Post("/", svcH.Create)
+				r.Post("/{id}/telemetry-links", svcH.CreateTelemetryLink)
+				r.Patch("/{id}/telemetry-links/{linkId}", svcH.PatchTelemetryLink)
+				r.Delete("/{id}/telemetry-links/{linkId}", svcH.DeleteTelemetryLink)
+				r.Get("/{id}/telemetry-samples", svcH.ListTelemetrySamples)
+				r.Get("/{id}/topology", svcH.Topology)
+				r.Get("/{id}", svcH.Get)
+				r.Put("/{id}", svcH.Update)
+				r.Delete("/{id}", svcH.Delete)
+			})
+
+			// Environments CRUD
+			envH := adminhandler.NewEnvironmentsHandler(s.store)
+			r.Route("/environments", func(r chi.Router) {
+				r.Get("/", envH.List)
+				r.Get("/check-slug", envH.CheckSlugAvailable)
+				r.Post("/", envH.Create)
+				r.Post("/{id}/telemetry-links", envH.CreateTelemetryLink)
+				r.Patch("/{id}/telemetry-links/{linkId}", envH.PatchTelemetryLink)
+				r.Delete("/{id}/telemetry-links/{linkId}", envH.DeleteTelemetryLink)
+				r.Get("/{id}/telemetry-samples", envH.ListTelemetrySamples)
+				r.Get("/{id}/topology", envH.Topology)
+				r.Get("/{id}", envH.Get)
+				r.Put("/{id}", envH.Update)
+				r.Delete("/{id}", envH.Delete)
+			})
+
+			telLinksSumH := adminhandler.NewTelemetryLinksSummaryHandler(s.store)
+			r.Get("/telemetry-links", telLinksSumH.ListAll)
+
+			// Telemetry CRUD
+			telH := adminhandler.NewTelemetryHandler(s.store, s.secret, s.hlctlEnabled)
+			r.Route("/telemetry", func(r chi.Router) {
+				r.Get("/", telH.List)
+				r.Get("/check-name", telH.CheckNameAvailable)
+				r.Post("/", telH.Create)
+				r.Get("/{id}", telH.Get)
+				r.Put("/{id}", telH.Update)
+				r.Delete("/{id}", telH.Delete)
+			})
+
+			shellHintsH := adminhandler.NewTelemetryShellHintsHandler(s.store)
+			r.Route("/telemetry-shell-hints", func(r chi.Router) {
+				r.Get("/", shellHintsH.List)
+				r.Post("/", shellHintsH.Create)
+				r.Patch("/reorder", shellHintsH.Reorder)
+				r.Put("/{id}", shellHintsH.Update)
+				r.Delete("/{id}", shellHintsH.Delete)
+			})
+
+			// K8s Clusters — register /{id}/… routes before /{id} so chi never treats a suffix as an {id} value.
+			r.Route("/k8s-clusters", func(r chi.Router) {
+				r.Get("/", k8sH.List)
+				r.Get("/shell-probe-rbac.yaml", k8sH.ShellProbeRBACManifest)
+				r.Post("/", k8sH.Create)
+				r.Post("/{id}/onboard", k8sH.GenerateOnboardingToken)
+				r.Post("/{id}/api-token", k8sH.SetClusterAPIToken)
+				r.Get("/{id}/verify", k8sH.VerifyConnectivity)
+				r.Post("/{id}/verify", k8sH.VerifyConnectivity)
+				r.Post("/{id}/revoke", k8sH.Revoke)
+				r.Get("/{id}", k8sH.Get)
+				r.Delete("/{id}", k8sH.Delete)
+			})
+
+			// Incidents
+			incAdminH := adminhandler.NewIncidentsHandler(s.store)
+			r.Route("/incidents", func(r chi.Router) {
+				r.Get("/", incAdminH.List)
+				r.Get("/{id}", incAdminH.Get)
+				r.Put("/{id}", incAdminH.Update)
+			})
+
+			// Probe Test
+			probeTestH := adminhandler.NewProbeTestHandler(s.store, s.secret, s.cfg.K8SInsecureSkipTLS)
+			r.Post("/probes/test", probeTestH.Test)
+			r.Post("/probes/test/stream", probeTestH.TestStream)
 		})
-
-		// Environments CRUD
-		envH := adminhandler.NewEnvironmentsHandler(s.store)
-		r.Route("/environments", func(r chi.Router) {
-			r.Get("/", envH.List)
-			r.Get("/check-slug", envH.CheckSlugAvailable)
-			r.Post("/", envH.Create)
-			r.Post("/{id}/telemetry-links", envH.CreateTelemetryLink)
-			r.Patch("/{id}/telemetry-links/{linkId}", envH.PatchTelemetryLink)
-			r.Delete("/{id}/telemetry-links/{linkId}", envH.DeleteTelemetryLink)
-			r.Get("/{id}/telemetry-samples", envH.ListTelemetrySamples)
-			r.Get("/{id}/topology", envH.Topology)
-			r.Get("/{id}", envH.Get)
-			r.Put("/{id}", envH.Update)
-			r.Delete("/{id}", envH.Delete)
-		})
-
-		telLinksSumH := adminhandler.NewTelemetryLinksSummaryHandler(s.store)
-		r.Get("/telemetry-links", telLinksSumH.ListAll)
-
-		// Telemetry CRUD
-		telH := adminhandler.NewTelemetryHandler(s.store, s.secret)
-		r.Route("/telemetry", func(r chi.Router) {
-			r.Get("/", telH.List)
-			r.Get("/check-name", telH.CheckNameAvailable)
-			r.Post("/", telH.Create)
-			r.Get("/{id}", telH.Get)
-			r.Put("/{id}", telH.Update)
-			r.Delete("/{id}", telH.Delete)
-		})
-
-		// K8s Clusters — register /{id}/… routes before /{id} so chi never treats a suffix as an {id} value.
-		r.Route("/k8s-clusters", func(r chi.Router) {
-			r.Get("/", k8sH.List)
-			r.Post("/", k8sH.Create)
-			r.Post("/{id}/onboard", k8sH.GenerateOnboardingToken)
-			r.Post("/{id}/api-token", k8sH.SetClusterAPIToken)
-			r.Get("/{id}/verify", k8sH.VerifyConnectivity)
-			r.Post("/{id}/verify", k8sH.VerifyConnectivity)
-			r.Post("/{id}/revoke", k8sH.Revoke)
-			r.Get("/{id}", k8sH.Get)
-			r.Delete("/{id}", k8sH.Delete)
-		})
-
-		// Incidents
-		incAdminH := adminhandler.NewIncidentsHandler(s.store)
-		r.Route("/incidents", func(r chi.Router) {
-			r.Get("/", incAdminH.List)
-			r.Get("/{id}", incAdminH.Get)
-			r.Put("/{id}", incAdminH.Update)
-		})
-
-		// Probe Test
-		probeTestH := adminhandler.NewProbeTestHandler(s.store, s.secret, s.cfg.K8SInsecureSkipTLS)
-		r.Post("/probes/test", probeTestH.Test)
 	})
 
 	return r

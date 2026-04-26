@@ -240,7 +240,8 @@ func (h *EnvironmentsHandler) CreateTelemetryLink(w http.ResponseWriter, r *http
 		handler.WriteError(w, http.StatusBadRequest, "invalid environment id")
 		return
 	}
-	if _, err := h.store.GetEnvironmentByID(r.Context(), envID); err != nil {
+	env, err := h.store.GetEnvironmentByID(r.Context(), envID)
+	if err != nil {
 		handler.WriteError(w, http.StatusNotFound, "environment not found")
 		return
 	}
@@ -260,6 +261,10 @@ func (h *EnvironmentsHandler) CreateTelemetryLink(w http.ResponseWriter, r *http
 	}
 	if !EnvironmentTelemetryAdapterAllowed(t) {
 		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry or liveness with source kubernetes")
+		return
+	}
+	if err := ValidateEnvironmentTelemetryInfra(env, t); err != nil {
+		handler.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	link, err := h.store.CreateEnvironmentTelemetryLink(r.Context(), envID, input)
@@ -288,6 +293,11 @@ func (h *EnvironmentsHandler) PatchTelemetryLink(w http.ResponseWriter, r *http.
 		handler.WriteError(w, http.StatusNotFound, "link not found")
 		return
 	}
+	env, err := h.store.GetEnvironmentByID(r.Context(), envID)
+	if err != nil {
+		handler.WriteError(w, http.StatusNotFound, "environment not found")
+		return
+	}
 	var input store.CreateTelemetryLinkInput
 	if err := handler.DecodeJSON(r, &input); err != nil {
 		handler.WriteError(w, http.StatusBadRequest, "invalid body")
@@ -304,6 +314,10 @@ func (h *EnvironmentsHandler) PatchTelemetryLink(w http.ResponseWriter, r *http.
 	}
 	if !EnvironmentTelemetryAdapterAllowed(t) {
 		handler.WriteError(w, http.StatusBadRequest, "environment links only support kubernetes telemetry or liveness with source kubernetes")
+		return
+	}
+	if err := ValidateEnvironmentTelemetryInfra(env, t); err != nil {
+		handler.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	link, err := h.store.UpdateEnvironmentTelemetryLink(r.Context(), linkID, input)

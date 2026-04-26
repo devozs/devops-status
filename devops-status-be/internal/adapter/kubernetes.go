@@ -35,10 +35,17 @@ type KubernetesConfig struct {
 	// Shell metric mode (cluster Job): when non-empty, runs like CLI k8s_cluster + cli_shell instead of HTTP checks.
 	CLIShell      string `json:"cli_shell,omitempty"`
 	ContainerPrep string `json:"container_prep,omitempty"`
-	Runner        string `json:"runner,omitempty"`
-	RunnerImage   string `json:"runner_image,omitempty"`
-	ParseJSON     bool   `json:"parse_json,omitempty"`
-	SuccessExit   int    `json:"success_exit,omitempty"`
+	Runner        string            `json:"runner,omitempty"`
+	RunnerImage   string            `json:"runner_image,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	NodeSelector  map[string]string `json:"node_selector,omitempty"`
+	ParseJSON     bool              `json:"parse_json,omitempty"`
+	SuccessExit   int               `json:"success_exit,omitempty"`
+	// Optional admin UI: links to telemetry_shell_hints rows (validated on save).
+	JobEnvHintID          string `json:"job_env_hint_id,omitempty"`
+	JobNodeSelectorHintID string `json:"job_node_selector_hint_id,omitempty"`
+	ContainerPrepHintID   string `json:"container_prep_hint_id,omitempty"`
+	ProbeShellHintID      string `json:"probe_shell_hint_id,omitempty"`
 }
 
 func NewKubernetesAdapter(imgs CLIRunnerImages, k8s K8sCLIRunner) *KubernetesAdapter {
@@ -107,6 +114,8 @@ func (a *KubernetesAdapter) probeShell(ctx context.Context, cfg KubernetesConfig
 		ContainerPrep:   cfg.ContainerPrep,
 		Runner:          cfg.Runner,
 		RunnerImage:     cfg.RunnerImage,
+		Env:             cfg.Env,
+		NodeSelector:    cfg.NodeSelector,
 		ParseJSON:       cfg.ParseJSON,
 		SuccessExit:     cfg.SuccessExit,
 		TimeoutMs:       cfg.TimeoutMs,

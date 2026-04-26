@@ -93,6 +93,15 @@
       @cancel="onDeleteDialogCancel"
     />
 
+    <AdminUnsavedConfirmDialog
+      v-model="unsavedDialogOpen"
+      :title="unsavedDialogTitle"
+      :warning="unsavedDialogMessage"
+      :confirm-label="unsavedConfirmLabel"
+      :discard-confirm="confirmUnsavedDialog"
+      @cancel="cancelUnsavedDialog"
+    />
+
     <div v-if="historySvc" class="modal-overlay" @click.self="closeHistory">
       <div class="modal-card modal-card--wide history-panel" role="dialog" aria-labelledby="svc-history-title">
         <h2 id="svc-history-title" class="modal-title">Probe history — {{ historySvc.name }}</h2>
@@ -138,7 +147,7 @@
                     <td class="history-trace-cell">
                       <span class="history-trace">{{ traceSnippet(s.source_trace) }}</span>
                       <button
-                        v-if="historyTelemetryAdapter() === 'cli' && sampleHasCliLogs(s)"
+                        v-if="historyTelemetryCliLike() && sampleHasCliLogs(s)"
                         type="button"
                         class="btn btn-sm history-cli-toggle"
                         @click="toggleHistoryCliExpand(s.id)"
@@ -147,7 +156,7 @@
                       </button>
                     </td>
                   </tr>
-                  <tr v-if="historyTelemetryAdapter() === 'cli' && historyCliExpanded[s.id] && sampleHasCliLogs(s)" class="history-cli-detail-row">
+                  <tr v-if="historyTelemetryCliLike() && historyCliExpanded[s.id] && sampleHasCliLogs(s)" class="history-cli-detail-row">
                     <td colspan="4">
                       <pre class="history-cli-pre">{{ formatCliSampleDetail(s) }}</pre>
                     </td>
@@ -166,11 +175,11 @@
       </div>
     </div>
 
-    <div v-if="showCreate || editing" class="modal-overlay" @click.self="closeModal">
+    <div v-if="showCreate || editing" class="modal-overlay" @click.self="requestCloseModal">
       <div class="modal-card modal-card--wide">
         <div class="modal-card__header">
           <h2 class="modal-title">{{ editing ? 'Edit service' : 'Create service' }}</h2>
-          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+          <button type="button" class="modal-card__close" aria-label="Close" @click="requestCloseModal">
             <X :size="20" :stroke-width="2" />
           </button>
         </div>
@@ -245,48 +254,69 @@
 
           <template v-if="editing">
             <h3 class="modal-section-title">Service telemetry</h3>
-            <p class="form-hint">Link HTTP, Prometheus, or CLI telemetry for this service.</p>
-            <TelemetryLinkSchedulingHelp />
-            <table class="mini-table">
-              <thead>
-                <tr>
-                  <th>Telemetry</th>
-                  <th title="Seconds between scheduled probe runs for this link">Interval</th>
-                  <th title="Number of recent operational results considered for up/down">Window</th>
-                  <th title="Consecutive failures required before marking down">Fail→down</th>
-                  <th title="Consecutive successes required before marking recovered">Success→up</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="link in svcLinks" :key="link.id">
-                  <td>{{ telemetryName(link.telemetry_id) }}</td>
-                  <td><input v-model.number="linkEdit[link.id].sample_interval_sec" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].window_size" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].consecutive_failures_to_down" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].consecutive_success_to_recover" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td class="mini-table__actions">
-                    <button type="button" class="btn btn-xs" @click="patchSvcLink(link.id)">Save</button>
-                    <button type="button" class="btn btn-xs btn-danger" @click="requestRemoveSvcLink(link.id)">Remove</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="add-link-row">
-              <AdminSelect
-                v-model="newLink.telemetry_id"
-                aria-label="Add telemetry"
-                placeholder="Add telemetry…"
-                :options="serviceTelemetrySelectOptions"
-              />
-              <button type="button" class="btn btn-sm btn-primary" :disabled="!newLink.telemetry_id" @click="addSvcLink">Add</button>
-            </div>
+            <p v-if="!serviceProviderSelected" class="form-hint">
+              Select a service provider above before you can add or edit telemetry links.
+            </p>
+            <template v-else>
+              <p class="form-hint">
+                Only probes for this service provider (plus CLI). Interval and thresholds are per link — use Save on each row to persist changes.
+              </p>
+              <TelemetryLinkSchedulingHelp />
+              <table class="mini-table">
+                <thead>
+                  <tr>
+                    <th>Telemetry</th>
+                    <th title="Minutes between scheduled probe runs for this link">Interval (min)</th>
+                    <th title="Number of recent operational results considered for up/down">Window</th>
+                    <th title="Consecutive failures required before marking down">Fail→down</th>
+                    <th title="Consecutive successes required before marking recovered">Success→up</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="link in svcLinks" :key="link.id">
+                    <td>{{ svcTelemetryRowName(link.telemetry_id) }}</td>
+                    <td><input v-model.number="linkEdit[link.id].sample_interval_min" type="number" class="form-input form-input--xs" min="0" step="any" /></td>
+                    <td><input v-model.number="linkEdit[link.id].window_size" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td><input v-model.number="linkEdit[link.id].consecutive_failures_to_down" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td><input v-model.number="linkEdit[link.id].consecutive_success_to_recover" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td class="mini-table__actions">
+                      <button
+                        type="button"
+                        class="btn btn-xs btn-primary"
+                        :disabled="!isSvcLinkDirty(link.id)"
+                        @click="patchSvcLink(link.id)"
+                      >
+                        Save
+                      </button>
+                      <button type="button" class="btn btn-xs btn-danger" @click="requestRemoveSvcLink(link.id)">Remove</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="add-link-row">
+                <AdminSelect
+                  v-model="newLink.telemetry_id"
+                  aria-label="Add telemetry"
+                  placeholder="Add telemetry…"
+                  :options="serviceTelemetrySelectOptions"
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  :disabled="!newLink.telemetry_id"
+                  @click="addSvcLink"
+                >
+                  Add
+                </button>
+              </div>
+            </template>
           </template>
 
           <p v-if="formError" class="field-error">{{ formError }}</p>
 
           <div class="modal-actions">
-            <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="requestCloseModal">Cancel</button>
             <button type="submit" class="btn btn-primary" :disabled="!canSaveGeneral || saving">
               {{ saving ? 'Saving…' : 'Save' }}
             </button>
@@ -300,11 +330,22 @@
 <script setup lang="ts">
 import { Cpu, Plus, X } from 'lucide-vue-next'
 import type { ResourceTopology } from '~/types/resource-topology'
+import { telemetryMatchesServiceProvider } from '~/utils/telemetryLinkAffinity'
+import { intervalMinFromSec, intervalSecFromMin } from '~/utils/telemetryLinkInterval'
 
 definePageMeta({ layout: 'admin' })
 
 const { apiFetch } = useApi()
 const { fetchAdmin: fetchTopologyAdmin } = useResourceTopology()
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
 
 function criticalityPillClass(c: string) {
   if (c === 'critical') return 'status-pill--critical'
@@ -392,7 +433,7 @@ const allTelemetry = ref<
 const svcLinks = ref<SvcLink[]>([])
 const linkEdit = ref<Record<string, {
   telemetry_id: string
-  sample_interval_sec: number
+  sample_interval_min: number
   window_size: number
   consecutive_failures_to_down: number
   consecutive_success_to_recover: number
@@ -558,7 +599,7 @@ function resetSlugValidation() {
 }
 
 function telemetryLinkableToService(d: { adapter: string; config_json?: Record<string, unknown> }) {
-  if (['http', 'prometheus', 'cli'].includes(d.adapter)) return true
+  if (['http', 'prometheus', 'cli', 'hlctl'].includes(d.adapter)) return true
   if (d.adapter !== 'liveness') return false
   const src = String(d.config_json?.source ?? '')
     .toLowerCase()
@@ -587,9 +628,46 @@ const serviceProviderSelectOptions = computed(() => [
   { value: '', label: 'None' },
   ...providers.value.map((p) => ({ value: p.id, label: providerLabel(p) })),
 ])
-const serviceTelemetrySelectOptions = computed(() =>
-  serviceTelemetry.value.map((t) => ({ value: t.id, label: `${t.name} (${t.adapter})` })),
-)
+
+const serviceProviderSelected = computed(() => !!(form.value.service_provider_id || '').trim())
+
+const linkedSvcTelemetryIds = computed(() => new Set(svcLinks.value.map((l) => l.telemetry_id)))
+
+const serviceTelemetrySelectOptions = computed(() => {
+  const sp = (form.value.service_provider_id || '').trim()
+  if (!sp) return []
+  const linked = linkedSvcTelemetryIds.value
+  return serviceTelemetry.value
+    .filter((t) => telemetryMatchesServiceProvider(t, sp) && !linked.has(t.id))
+    .map((t) => ({ value: t.id, label: `${t.name} (${t.adapter})` }))
+})
+
+function svcTelemetryRowName(id: string) {
+  const t = allTelemetry.value.find((d) => d.id === id)
+  return t?.name ?? id
+}
+
+function isSvcLinkDirty(linkId: string): boolean {
+  const row = svcLinks.value.find((l) => l.id === linkId)
+  const ed = linkEdit.value[linkId]
+  if (!row || !ed) return false
+  return (
+    ed.telemetry_id !== row.telemetry_id
+    || intervalSecFromMin(ed.sample_interval_min) !== row.sample_interval_sec
+    || ed.window_size !== row.window_size
+    || ed.consecutive_failures_to_down !== row.consecutive_failures_to_down
+    || ed.consecutive_success_to_recover !== row.consecutive_success_to_recover
+  )
+}
+
+const hasAnySvcLinkDirty = computed(() => svcLinks.value.some((l) => isSvcLinkDirty(l.id)))
+
+function requestCloseModal() {
+  requestModalClose(performCloseModal, {
+    isDirty: () => hasAnySvcLinkDirty.value,
+    message: 'You have unsaved changes to telemetry link scheduling. Discard them?',
+  })
+}
 
 function telemetryName(id: string) {
   const t = allTelemetry.value.find((d) => d.id === id)
@@ -616,6 +694,11 @@ function historyTelemetryAdapter() {
   const tid = historyTabTelemetryId.value
   const t = allTelemetry.value.find((d) => d.id === tid)
   return t?.adapter || ''
+}
+
+function historyTelemetryCliLike() {
+  const a = historyTelemetryAdapter()
+  return a === 'cli' || a === 'hlctl'
 }
 
 function sampleHasCliLogs(s: TelemetrySampleRow) {
@@ -741,7 +824,7 @@ function syncLinkEdit() {
   for (const l of svcLinks.value) {
     m[l.id] = {
       telemetry_id: l.telemetry_id,
-      sample_interval_sec: l.sample_interval_sec,
+      sample_interval_min: intervalMinFromSec(l.sample_interval_sec),
       window_size: l.window_size,
       consecutive_failures_to_down: l.consecutive_failures_to_down,
       consecutive_success_to_recover: l.consecutive_success_to_recover,
@@ -812,7 +895,7 @@ function startCreate() {
   newLink.value = { telemetry_id: '' }
 }
 
-function closeModal() {
+function performCloseModal() {
   showCreate.value = false
   editing.value = null
   svcLinks.value = []
@@ -858,7 +941,7 @@ async function saveService() {
         body: JSON.stringify(body),
       })
       await loadServices()
-      closeModal()
+      performCloseModal()
     } else {
       const created = (await apiFetch('/api/admin/services', {
         method: 'POST',
@@ -893,7 +976,22 @@ async function saveService() {
 }
 
 async function addSvcLink() {
+  formError.value = ''
   if (!editing.value || !newLink.value.telemetry_id) return
+  const sp = (form.value.service_provider_id || '').trim()
+  if (!sp) {
+    formError.value = 'Select a service provider before adding telemetry.'
+    return
+  }
+  if (linkedSvcTelemetryIds.value.has(newLink.value.telemetry_id)) {
+    formError.value = 'This telemetry is already linked to this service.'
+    return
+  }
+  const tel = allTelemetry.value.find((d) => d.id === newLink.value.telemetry_id)
+  if (!tel || !telemetryMatchesServiceProvider(tel, sp)) {
+    formError.value = 'Telemetry must use the same service provider as this service (CLI allowed).'
+    return
+  }
   await apiFetch(`/api/admin/services/${editing.value.id}/telemetry-links`, {
     method: 'POST',
     body: JSON.stringify({
@@ -916,7 +1014,13 @@ async function patchSvcLink(linkId: string) {
   if (!inp) return
   await apiFetch(`/api/admin/services/${editing.value.id}/telemetry-links/${linkId}`, {
     method: 'PATCH',
-    body: JSON.stringify(inp),
+    body: JSON.stringify({
+      telemetry_id: inp.telemetry_id,
+      sample_interval_sec: intervalSecFromMin(inp.sample_interval_min),
+      window_size: inp.window_size,
+      consecutive_failures_to_down: inp.consecutive_failures_to_down,
+      consecutive_success_to_recover: inp.consecutive_success_to_recover,
+    }),
   })
   const detail = await apiFetch<{ telemetry_links?: SvcLink[] }>(`/api/admin/services/${editing.value.id}`)
   svcLinks.value = detail.telemetry_links || []

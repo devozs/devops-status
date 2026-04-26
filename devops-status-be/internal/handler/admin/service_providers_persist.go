@@ -56,7 +56,7 @@ func (h *ServiceProvidersHandler) persistProviderCredentialsAfterSave(ctx contex
 	}
 	switch p.ProviderType {
 	case "prometheus":
-		_, authMethod, err := parsePrometheusConfigJSON(p.ConfigJSON)
+		_, authMethod, _, err := parsePrometheusConfigJSON(p.ConfigJSON)
 		if err != nil {
 			return err
 		}
@@ -71,6 +71,30 @@ func (h *ServiceProvidersHandler) persistProviderCredentialsAfterSave(ctx contex
 		return h.persistServiceProviderPrometheusCreds(ctx, p.ID, authMethod, merged)
 	case "grafana", "elasticsearch", "jenkins", "artifactory":
 		return h.persistHTTPBasicProviderCreds(ctx, p.ID, p.ProviderType, p.ConfigJSON, body.Credentials, mergeExisting)
+	case "rancher":
+		_, authMethod, _, err := parseRancherConfigJSON(p.ConfigJSON)
+		if err != nil {
+			return err
+		}
+		base := secrets.RancherCredentials{}
+		if mergeExisting {
+			base, _ = h.secret.ReadServiceProviderRancherCredentials(ctx, p.ID)
+		}
+		merged := mergeRancherCreds(body.Credentials, base)
+		return h.persistServiceProviderRancherCreds(ctx, p.ID, authMethod, merged)
+	case "hlctl":
+		if h.secret == nil {
+			return errors.New("secrets store not configured")
+		}
+		base := secrets.HTTPBasicCredentials{}
+		if mergeExisting {
+			base, _ = h.secret.ReadServiceProviderHTTPBasic(ctx, p.ID, secrets.KeyHlctlCreds)
+		}
+		merged := mergeHTTPBasicCreds(body.Credentials, base)
+		if merged.Username == "" || merged.Password == "" {
+			return errors.New("hlctl requires username and password")
+		}
+		return h.secret.WriteServiceProviderHTTPBasic(ctx, p.ID, secrets.KeyHlctlCreds, merged)
 	default:
 		return nil
 	}

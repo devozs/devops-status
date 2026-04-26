@@ -75,9 +75,16 @@ func (h *IncidentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Status != "" {
-		var rb *string
 		if req.Status == "resolved" {
+			req.Status = store.IncidentStatusManuallyResolved
+		}
+		var rb *string
+		switch req.Status {
+		case store.IncidentStatusManuallyResolved:
 			v := "admin"
+			rb = &v
+		case store.IncidentStatusAutoResolved:
+			v := "system"
 			rb = &v
 		}
 		if err := h.store.UpdateIncidentStatus(r.Context(), id, req.Status, rb); err != nil {

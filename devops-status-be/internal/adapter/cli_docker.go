@@ -5,10 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+type logChunkWriter struct {
+	sink   ProbeLogSink
+	stream string
+}
+
+func (w *logChunkWriter) Write(p []byte) (int, error) {
+	if w != nil && w.sink != nil && len(p) > 0 {
+		w.sink.WriteLog(w.stream, p)
+	}
+	return len(p), nil
+}
 
 // DockerRunOpts configures docker run for CLI probes.
 type DockerRunOpts struct {
@@ -47,8 +60,13 @@ func RunCLIAsDocker(ctx context.Context, image string, cfg CLIConfig, opts Docke
 
 	cmd := exec.CommandContext(execCtx, "docker", args...)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	if sink := ProbeLogSinkFromContext(ctx); sink != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, &logChunkWriter{sink: sink, stream: "stdout"})
+		cmd.Stderr = io.MultiWriter(&stderr, &logChunkWriter{sink: sink, stream: "stderr"})
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
 	err := cmd.Run()
 	latency := time.Since(start)

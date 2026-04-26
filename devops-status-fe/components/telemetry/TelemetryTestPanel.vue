@@ -18,6 +18,14 @@
         {{ busy ? 'Running…' : 'Verify' }}
       </button>
       <button
+        v-if="busy"
+        type="button"
+        class="btn btn-sm btn-stop-verify"
+        @click="emit('abort-verify')"
+      >
+        Stop
+      </button>
+      <button
         v-if="adapter === 'prometheus'"
         type="button"
         class="btn btn-sm"
@@ -27,40 +35,50 @@
         Test connectivity
       </button>
     </div>
+    <div v-if="showTerminal" class="terminal-wrap">
+      <div class="terminal-head">
+        <span class="terminal-title">Execution log</span>
+        <div class="terminal-head-actions">
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost terminal-copy"
+            :disabled="!copyableExecutionLog"
+            @click="copyExecutionLog"
+          >
+            Copy log
+          </button>
+          <Sun v-if="streamIdle" class="terminal-sun" :size="15" :stroke-width="2" aria-hidden="true" />
+        </div>
+      </div>
+      <div v-if="streamHostLine" class="terminal-host">{{ streamHostLine }}</div>
+      <div ref="terminalRef" class="terminal-pre" v-html="streamHtml" />
+    </div>
+    <div v-if="result && cliRunnerLine" class="execution-context">
+      <span class="execution-context__label">Execution</span>
+      <span class="execution-context__meta">{{ cliRunnerLine }}</span>
+    </div>
     <div v-if="result" class="test-out" :class="resultBoxClass">
       <strong>{{ verifyOk ? 'OK' : 'Failed' }}</strong>
       <span v-if="result.qos_level"> · QoS: {{ result.qos_level }}</span>
       <span v-if="result.latency_ms != null"> · {{ result.latency_ms }}ms</span>
+      <span v-if="rawValueSummary"> · {{ rawValueSummary }}</span>
       <span v-if="artifactoryDownloadLine" class="muted"> · {{ artifactoryDownloadLine }}</span>
       <p v-if="result.error" class="err">{{ result.error }}</p>
-      <pre v-if="result.trace" class="trace trace--summary">{{ result.trace }}</pre>
-      <template v-if="adapter === 'cli' && hasCliStructuredLogs">
-        <div class="cli-logs-toolbar">
-          <span v-if="cliRunnerLine" class="cli-meta muted">{{ cliRunnerLine }}</span>
-          <button type="button" class="btn btn-sm btn-ghost" :disabled="!copyableCliText" @click="copyCliLogs">
-            Copy CLI logs
-          </button>
-        </div>
-        <div v-if="cliStdout" class="cli-log-block">
-          <div class="cli-log-label">Stdout</div>
-          <pre class="trace trace--cli">{{ cliStdout }}</pre>
-        </div>
-        <div v-if="cliStderr" class="cli-log-block">
-          <div class="cli-log-label">Stderr</div>
-          <pre class="trace trace--cli">{{ cliStderr }}</pre>
-        </div>
-        <div v-if="cliQosAttempts.length" class="cli-log-block">
-          <div class="cli-log-label">QoS attempts</div>
-          <pre class="trace trace--cli">{{ cliQosAttemptsFormatted }}</pre>
-        </div>
-      </template>
+      <div v-if="showResultTrace" class="trace trace--summary trace--ansi" v-html="traceHtml" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { AnsiUp } from 'ansi_up'
+import { Sun } from 'lucide-vue-next'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { AdapterType } from '~/types/telemetry'
+import { stripAnsi } from '~/utils/stripAnsi'
+
+function ansiToHtml(s: string): string {
+  return new AnsiUp().ansi_to_html(s)
+}
 
 const props = defineProps<{
   adapter: AdapterType
@@ -80,6 +98,15 @@ const requiresEnvironment = computed(() => props.requiresEnvironment === true)
 const environmentId = defineModel<string>('environmentId', { default: '' })
 
 const result = ref<Record<string, unknown> | null>(null)
+
+const streamText = ref('')
+const streamHtml = computed(() => ansiToHtml(streamText.value))
+const streamHostLine = ref('')
+const streamIdle = ref(false)
+const terminalRef = ref<HTMLElement | null>(null)
+let lastLogAt = 0
+
+const showTerminal = computed(() => props.busy || streamText.value.length > 0 || streamHostLine.value.length > 0)
 
 const verifyOk = computed(() => {
   const r = result.value
@@ -133,17 +160,15 @@ function strVal(v: unknown): string {
 const cliStdout = computed(() => strVal(cliLogsObj.value?.cli_stdout))
 const cliStderr = computed(() => strVal(cliLogsObj.value?.cli_stderr))
 
+const traceHtml = computed(() => {
+  const r = result.value
+  if (!r || r.trace == null) return ''
+  return ansiToHtml(String(r.trace))
+})
+
 const cliQosAttempts = computed(() => {
   const raw = cliLogsObj.value?.cli_qos_attempts
   return Array.isArray(raw) ? raw : []
-})
-
-const cliQosAttemptsFormatted = computed(() => {
-  try {
-    return JSON.stringify(cliQosAttempts.value, null, 2)
-  } catch {
-    return String(cliQosAttempts.value)
-  }
 })
 
 const cliRunnerLine = computed(() => {
@@ -152,15 +177,18 @@ const cliRunnerLine = computed(() => {
   const runner = strVal(o.cli_runner)
   const image = strVal(o.cli_image)
   const job = strVal(o.job)
+  const ns = strVal(o.namespace)
   const parts: string[] = []
   if (runner) parts.push(`runner=${runner}`)
   if (image) parts.push(`image=${image}`)
   if (job) parts.push(`job=${job}`)
+  if (ns) parts.push(`ns=${ns}`)
   return parts.join(' · ')
 })
 
+/** True when API returned CLI shell metadata — suppress capped `result.trace` so it does not duplicate streamed output. */
 const hasCliStructuredLogs = computed(() => {
-  if (props.adapter !== 'cli' && props.adapter !== 'kubernetes') return false
+  if (props.adapter !== 'cli' && props.adapter !== 'hlctl' && props.adapter !== 'kubernetes') return false
   return Boolean(
     cliStdout.value ||
       cliStderr.value ||
@@ -169,20 +197,97 @@ const hasCliStructuredLogs = computed(() => {
   )
 })
 
-const copyableCliText = computed(() => {
-  const parts: string[] = []
-  if (cliRunnerLine.value) parts.push(cliRunnerLine.value)
-  if (cliStdout.value) parts.push('--- stdout ---\n' + cliStdout.value)
-  if (cliStderr.value) parts.push('--- stderr ---\n' + cliStderr.value)
-  if (cliQosAttempts.value.length) parts.push('--- qos attempts ---\n' + cliQosAttemptsFormatted.value)
-  return parts.join('\n\n')
+function metricShellSourceLabel(source: string): string {
+  switch (source) {
+    case 'json':
+      return 'numeric, JSON field value'
+    case 'first_number':
+      return 'numeric, first number in stdout'
+    case 'last_number':
+      return 'numeric, last number in stdout'
+    default:
+      return 'numeric'
+  }
+}
+
+/** QoS verify line: compared value + how it was parsed + configured bands (metric shell). */
+const rawValueSummary = computed(() => {
+  const r = result.value
+  if (!r) return ''
+
+  const o = cliLogsObj.value
+  const vk = o ? String(o.value_kind || '').toLowerCase().trim() : ''
+
+  if (vk === 'number' && o) {
+    const src = String(o.metric_value_source || '').trim()
+    const g = String(o.metric_green_band || '').trim()
+    const y = String(o.metric_yellow_band || '').trim()
+    const bands = [g && `green ${g}`, y && `yellow ${y}`].filter(Boolean).join(' · ')
+    const v = r.raw_value
+    if (src && typeof v === 'number' && Number.isFinite(v)) {
+      const mode = metricShellSourceLabel(src)
+      const parts = [`Compared (${mode}): ${v}`]
+      if (bands) parts.push(`Bands: ${bands}`)
+      return parts.join(' · ')
+    }
+    if (g || y) {
+      const err = typeof r.error === 'string' ? r.error.trim() : ''
+      const bandStr = bands ? `Bands: ${bands}` : ''
+      if (err) return bandStr ? `${bandStr} · ${err}` : err
+      if (bandStr) return bandStr
+    }
+  }
+
+  if (vk === 'text' && o) {
+    const t = String(o.cli_text_value ?? '').trim()
+    const g = String(o.metric_green_band || '').trim()
+    const y = String(o.metric_yellow_band || '').trim()
+    const bands = [g && `green ${g}`, y && `yellow ${y}`].filter(Boolean).join(' · ')
+    if (t !== '') {
+      const parts = [`Compared (text, trimmed stdout): ${t}`]
+      if (bands) parts.push(`Bands: ${bands}`)
+      return parts.join(' · ')
+    }
+    if (g || y) {
+      const err = typeof r.error === 'string' ? r.error.trim() : ''
+      const bandStr = bands ? `Bands: ${bands}` : ''
+      if (err) return bandStr ? `${bandStr} · ${err}` : err
+      if (bandStr) return bandStr
+    }
+  }
+
+  const v = r.raw_value
+  if (v === undefined || v === null) return ''
+  if (typeof v === 'number' && Number.isFinite(v)) return `value: ${v}`
+  if (typeof v === 'string') {
+    const t = v.trim()
+    return t === '' ? '' : `value: ${t}`
+  }
+  try {
+    return `value: ${JSON.stringify(v)}`
+  } catch {
+    return ''
+  }
 })
 
-async function copyCliLogs() {
-  const t = copyableCliText.value
+/** Combined trace duplicates prep + probe; CLI QoS card uses cli_stdout only. */
+const showResultTrace = computed(() => {
+  const r = result.value
+  if (!r || r.trace == null || String(r.trace).trim() === '') return false
+  if (hasCliStructuredLogs.value) return false
+  return true
+})
+
+const copyableExecutionLog = computed(() => streamText.value.length > 0)
+
+async function copyExecutionLog() {
+  const parts: string[] = []
+  if (streamHostLine.value.trim()) parts.push(streamHostLine.value)
+  if (streamText.value) parts.push(streamText.value)
+  const t = parts.join('\n\n')
   if (!t || !navigator.clipboard?.writeText) return
   try {
-    await navigator.clipboard.writeText(t)
+    await navigator.clipboard.writeText(stripAnsi(t))
   } catch {
     /* ignore */
   }
@@ -203,6 +308,8 @@ const resultBoxClass = computed(() => {
 
 const emit = defineEmits<{
   verify: [payload: Record<string, unknown>]
+  /** User clicked Stop — parent should abort the SSE request. */
+  'abort-verify': []
 }>()
 
 const filteredEnvs = computed(() => {
@@ -244,8 +351,47 @@ watch(
   },
 )
 
+function clearStream() {
+  streamText.value = ''
+  streamHostLine.value = ''
+  streamIdle.value = false
+  lastLogAt = 0
+}
+
+function setStreamHost(meta: Record<string, unknown>) {
+  const parts: string[] = []
+  if (meta.cluster_name) parts.push(`cluster=${String(meta.cluster_name)}`)
+  if (meta.cluster_id && !meta.cluster_name) parts.push(`cluster_id=${String(meta.cluster_id)}`)
+  if (meta.execution_target) parts.push(`target=${String(meta.execution_target)}`)
+  if (meta.shell_host_kind) parts.push(`kind=${String(meta.shell_host_kind)}`)
+  streamHostLine.value = parts.join(' · ')
+}
+
+function appendStreamLog(stream: string, chunk: string) {
+  lastLogAt = Date.now()
+  streamIdle.value = false
+  const label = stream === 'combined' ? '' : `[${stream}] `
+  streamText.value += label + chunk
+  void nextTick(() => {
+    const el = terminalRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function markStreamHeartbeat() {
+  if (!props.busy) return
+  if (!streamText.value && lastLogAt === 0) {
+    streamIdle.value = true
+    return
+  }
+  if (streamText.value.length > 0 && Date.now() - lastLogAt > 1800) {
+    streamIdle.value = true
+  }
+}
+
 function onVerify() {
   result.value = null
+  clearStream()
   const payload: Record<string, unknown> = { test_connect_only: false }
   if (requiresEnvironment.value && environmentId.value) payload.environment_id = environmentId.value
   emit('verify', payload)
@@ -253,6 +399,7 @@ function onVerify() {
 
 function onConnectOnly() {
   result.value = null
+  clearStream()
   const payload: Record<string, unknown> = { test_connect_only: true }
   if (requiresEnvironment.value && environmentId.value) payload.environment_id = environmentId.value
   emit('verify', payload)
@@ -262,6 +409,10 @@ defineExpose({
   setResult(r: Record<string, unknown> | null) {
     result.value = r
   },
+  clearStream,
+  setStreamHost,
+  appendStreamLog,
+  markStreamHeartbeat,
 })
 </script>
 
@@ -270,7 +421,115 @@ defineExpose({
 .subheading { font-size: 0.95rem; margin: 0 0 8px; font-weight: 600; }
 .form-group { margin-bottom: 8px; max-width: 400px; }
 .form-label { font-size: 0.85rem; font-weight: 500; color: var(--color-form-label); }
-.actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.btn-stop-verify { border-color: var(--color-border-strong); color: var(--color-text-secondary); }
+.btn-stop-verify:hover:not(:disabled) { color: var(--color-text); border-color: var(--color-text-secondary); }
+.terminal-wrap {
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  overflow: hidden;
+}
+.terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #8b949e;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.terminal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* Dark chrome: global .btn uses page text color (dark) — force readable label on terminal header */
+.terminal-head .terminal-copy.btn {
+  color: #c9d1d9;
+  border-color: #484f58;
+  background: rgba(240, 246, 252, 0.06);
+}
+.terminal-head .terminal-copy.btn:hover:not(:disabled) {
+  color: #f0f6fc;
+  border-color: #8b949e;
+  background: rgba(240, 246, 252, 0.12);
+}
+.terminal-head .terminal-copy.btn:disabled {
+  color: #6e7681;
+  border-color: #30363d;
+  background: transparent;
+  opacity: 1;
+}
+.terminal-copy {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+.terminal-title { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.terminal-sun {
+  color: #e3b341;
+  animation: sun-spin 1.2s linear infinite;
+}
+@keyframes sun-spin {
+  to { transform: rotate(360deg); }
+}
+.terminal-host {
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  color: #79c0ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  border-bottom: 1px solid #21262d;
+  word-break: break-word;
+}
+.terminal-pre {
+  margin: 0;
+  padding: 10px;
+  min-height: 100px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #3fb950;
+  background: #0d1117;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.execution-context {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary, #f4f4f5);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+.execution-context__label {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.execution-context__meta {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
 .test-out { margin-top: 10px; padding: 10px; border-radius: 6px; font-size: 0.85rem; border: 1px solid transparent; }
 .test-out--ok { background: #dcfce7; color: #166534; border-color: rgba(34, 197, 94, 0.35); }
 .test-out--fail { background: #fef2f2; color: #991b1b; border-color: rgba(239, 68, 68, 0.35); }
@@ -280,11 +539,10 @@ defineExpose({
 .err { margin: 6px 0 0; }
 .trace { margin-top: 8px; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; }
 .trace--summary { max-height: 140px; overflow: auto; }
-.trace--cli { max-height: 280px; overflow: auto; margin-top: 4px; }
-.cli-logs-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-.cli-meta { font-size: 0.72rem; }
-.cli-log-block { margin-top: 10px; }
-.cli-log-label { font-size: 0.72rem; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.02em; }
+.trace--ansi {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.45;
+}
 .btn-ghost { background: transparent; border: 1px solid var(--color-border-strong); }
 .muted { color: var(--color-text-secondary); }
 .help { font-size: 0.8rem; color: var(--color-text-secondary); margin: 0 0 8px; line-height: 1.4; }

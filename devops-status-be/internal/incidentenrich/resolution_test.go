@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/devops-status/be/internal/model"
+	"github.com/devops-status/be/internal/store"
 	"github.com/google/uuid"
 )
 
@@ -22,6 +23,9 @@ func TestResolution(t *testing.T) {
 		{"open", model.Incident{ID: id}, "open"},
 		{"automatic", model.Incident{ID: id, ResolvedAt: &now, ResolvedBy: &sys}, "automatic"},
 		{"manual", model.Incident{ID: id, ResolvedAt: &now, ResolvedBy: &adm}, "manual"},
+		{"automatic_by_status", model.Incident{ID: id, ResolvedAt: &now, Status: store.IncidentStatusAutoResolved}, "automatic"},
+		{"manual_by_status", model.Incident{ID: id, ResolvedAt: &now, Status: store.IncidentStatusManuallyResolved}, "manual"},
+		{"status_over_resolved_by", model.Incident{ID: id, ResolvedAt: &now, ResolvedBy: &adm, Status: store.IncidentStatusAutoResolved}, "automatic"},
 		{"unknown", model.Incident{ID: id, ResolvedAt: &now}, "unknown"},
 	}
 	for _, tc := range tests {

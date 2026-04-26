@@ -39,13 +39,15 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := generateCSRFToken()
+	// Behind nginx/ingress, TLS terminates at proxy — trust X-Forwarded-Proto so Secure cookies work on HTTPS.
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: false, // must be readable by JS
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false, // set true in production
+		Secure:   secure,
 	})
 }
 

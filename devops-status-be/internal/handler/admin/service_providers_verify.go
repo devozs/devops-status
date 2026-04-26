@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -60,7 +61,59 @@ func (h *ServiceProvidersHandler) VerifyReachability(w http.ResponseWriter, r *h
 		h.verifyArtifactoryReachability(w, r, body)
 	case "dns":
 		h.verifyDNSReachability(w, r, body)
+	case "rancher":
+		h.verifyRancherReachability(w, r, body)
+	case "hlctl":
+		h.verifyHLCTLReachability(w, r, body)
 	}
+}
+
+func (h *ServiceProvidersHandler) verifyHLCTLReachability(w http.ResponseWriter, r *http.Request, body verifyServiceProviderBody) {
+	if !h.hlctlEnabled {
+		handler.WriteError(w, http.StatusBadRequest, "HLCTL is not available (kubectl and hlctl must be installed in management)")
+		return
+	}
+	ctx := r.Context()
+	user := strings.TrimSpace(body.Credentials["username"])
+	pass := body.Credentials["password"]
+	if body.ServiceProviderID != "" && h.secret != nil {
+		id, err := uuid.Parse(strings.TrimSpace(body.ServiceProviderID))
+		if err == nil {
+			stored, _ := h.secret.ReadServiceProviderHTTPBasic(ctx, id, secrets.KeyHlctlCreds)
+			if user == "" {
+				user = stored.Username
+			}
+			if pass == "" {
+				pass = stored.Password
+			}
+		}
+	}
+	if user == "" || pass == "" {
+		writeVerifyFail(w, "username and password are required for hlctl verify")
+		return
+	}
+	homeDir, err := os.MkdirTemp("", "hlctl-verify-*")
+	if err != nil {
+		writeVerifyFail(w, err.Error())
+		return
+	}
+	defer func() { _ = os.RemoveAll(homeDir) }()
+
+	lat, logOut, ok := adapter.HLCTLVerifyKubeconfig(ctx, homeDir, user, pass, h.cliLogMax)
+	if !ok {
+		handler.WriteJSON(w, http.StatusOK, map[string]any{
+			"ok":         false,
+			"error":      "hlctl kubeconfig failed",
+			"latency_ms": lat,
+			"log":        logOut,
+		})
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"latency_ms": lat,
+		"log":        logOut,
+	})
 }
 
 func (h *ServiceProvidersHandler) verifyPrometheusReachability(w http.ResponseWriter, r *http.Request, body verifyServiceProviderBody) {
@@ -92,9 +145,10 @@ func (h *ServiceProvidersHandler) verifyPrometheusReachability(w http.ResponseWr
 	creds := mergePrometheusCreds(body.Credentials, stored)
 
 	cfg := adapter.PrometheusConfig{
-		Endpoint:   endpoint,
-		AuthMethod: authMethod,
-		TimeoutMs:  15000,
+		Endpoint:        endpoint,
+		AuthMethod:      authMethod,
+		TimeoutMs:       15000,
+		InsecureSkipTLS: prometheusInsecureSkipTLSRequested(body.InsecureSkipTLS),
 	}
 	switch authMethod {
 	case "basic":
@@ -224,6 +278,56 @@ func (h *ServiceProvidersHandler) verifyArtifactoryReachability(w http.ResponseW
 		return
 	}
 	latencyMs, err := providerverify.VerifyArtifactory(r.Context(), baseURL, authMethod, creds.Username, creds.Password)
+	if err != nil {
+		writeVerifyFail(w, err.Error())
+		return
+	}
+	writeVerifyOK(w, latencyMs)
+}
+
+// prometheusInsecureSkipTLSRequested is true when the UI sends insecure_skip_tls, or when the
+// management process has PROMETHEUS_INSECURE_SKIP_TLS_VERIFY / K8S_INSECURE_SKIP_TLS_VERIFY set (cluster escape hatch).
+func prometheusInsecureSkipTLSRequested(fromBody bool) bool {
+	if fromBody {
+		return true
+	}
+	for _, key := range []string{"PROMETHEUS_INSECURE_SKIP_TLS_VERIFY", "K8S_INSECURE_SKIP_TLS_VERIFY"} {
+		v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+		if v == "1" || v == "true" || v == "yes" {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ServiceProvidersHandler) verifyRancherReachability(w http.ResponseWriter, r *http.Request, body verifyServiceProviderBody) {
+	baseURL := strings.TrimSpace(body.BaseURL)
+	if baseURL == "" {
+		handler.WriteError(w, http.StatusBadRequest, "base_url is required for rancher")
+		return
+	}
+	authMethod := strings.ToLower(strings.TrimSpace(body.AuthMethod))
+	if authMethod == "" {
+		authMethod = "none"
+	}
+	if authMethod != "none" && authMethod != "bearer" {
+		handler.WriteError(w, http.StatusBadRequest, "auth_method must be none or bearer")
+		return
+	}
+	var stored secrets.RancherCredentials
+	if body.ServiceProviderID != "" && h.secret != nil {
+		id, err := uuid.Parse(strings.TrimSpace(body.ServiceProviderID))
+		if err == nil {
+			stored, _ = h.secret.ReadServiceProviderRancherCredentials(r.Context(), id)
+		}
+	}
+	merged := mergeRancherCreds(body.Credentials, stored)
+	if authMethod == "bearer" && merged.BearerToken == "" {
+		writeVerifyFail(w, "bearer auth requires an API token (enter one or verify after saving credentials)")
+		return
+	}
+	insecure := prometheusInsecureSkipTLSRequested(body.InsecureSkipTLS)
+	latencyMs, err := providerverify.VerifyRancher(r.Context(), baseURL, authMethod, merged.BearerToken, insecure)
 	if err != nil {
 		writeVerifyFail(w, err.Error())
 		return

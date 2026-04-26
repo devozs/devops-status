@@ -2,10 +2,12 @@ package adapter
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,17 +25,50 @@ type PrometheusConfig struct {
 	Username    string  `json:"username,omitempty"`
 	Password    string  `json:"password,omitempty"`
 	BearerToken string  `json:"bearer_token,omitempty"`
-	Query       string  `json:"query"`
-	Threshold   float64 `json:"threshold,omitempty"`
-	Operator    string  `json:"operator,omitempty"`
-	TimeoutMs   int     `json:"timeout_ms,omitempty"`
-	QoSMode     bool    `json:"qos_mode,omitempty"` // when true, Success if query returns scalar; thresholds applied in QoS engine
+	// InsecureSkipTLS disables TLS certificate verification (private CA / self-signed). Prefer mounting the org CA into the pod when possible.
+	InsecureSkipTLS bool `json:"insecure_skip_tls,omitempty"`
+	Query           string  `json:"query"`
+	Threshold       float64 `json:"threshold,omitempty"`
+	Operator        string  `json:"operator,omitempty"`
+	TimeoutMs       int     `json:"timeout_ms,omitempty"`
+	QoSMode         bool    `json:"qos_mode,omitempty"` // when true, Success if query returns scalar; thresholds applied in QoS engine
 }
 
 func NewPrometheusAdapter() *PrometheusAdapter {
 	return &PrometheusAdapter{
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: newPrometheusHTTPClient(30*time.Second, false),
 	}
+}
+
+func newPrometheusHTTPClient(timeout time.Duration, insecureSkipTLS bool) *http.Client {
+	if insecureSkipTLS {
+		// Do not rely on http.DefaultTransport type assertion or Clone() — some runtimes
+		// replace DefaultTransport; skipping verify must always use an explicit Transport.
+		return &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+					MinVersion:         tls.VersionTLS12,
+				},
+			},
+		}
+	}
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: timeout}
+	}
+	return &http.Client{Timeout: timeout, Transport: tr.Clone()}
 }
 
 func (a *PrometheusAdapter) Name() string { return "prometheus" }
@@ -52,7 +87,7 @@ func (a *PrometheusAdapter) Probe(ctx context.Context, configRaw json.RawMessage
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
 	}
-	client := &http.Client{Timeout: timeout}
+	client := newPrometheusHTTPClient(timeout, cfg.InsecureSkipTLS)
 
 	queryURL := fmt.Sprintf("%s/api/v1/query?query=%s", strings.TrimRight(cfg.Endpoint, "/"), url.QueryEscape(cfg.Query))
 	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
@@ -193,7 +228,7 @@ func VerifyPrometheusIntegration(ctx context.Context, cfg PrometheusConfig) (lat
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
 	}
-	client := &http.Client{Timeout: timeout}
+	client := newPrometheusHTTPClient(timeout, cfg.InsecureSkipTLS)
 	base := strings.TrimRight(cfg.Endpoint, "/")
 	if base == "" {
 		return 0, fmt.Errorf("endpoint is required")
@@ -255,7 +290,7 @@ func TestPrometheusConnectivity(ctx context.Context, cfg PrometheusConfig) error
 	if cfg.TimeoutMs > 0 {
 		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
 	}
-	client := &http.Client{Timeout: timeout}
+	client := newPrometheusHTTPClient(timeout, cfg.InsecureSkipTLS)
 	base := strings.TrimRight(cfg.Endpoint, "/")
 	try := []string{
 		base + "/api/v1/status/config",

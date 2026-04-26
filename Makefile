@@ -140,6 +140,8 @@ db-reset:
 	@echo "Database reset complete."
 
 # --- Backend ---
+# GOWORK=off: devops-status-be is a separate module; root go.work does not list it, so workspace mode
+# would wrongly resolve packages under habana-services/... and fail.
 be-run:
 	@lsof -t -i:8080 | xargs kill -9 2>/dev/null || true
 	@TUNNEL_URL=""; \
@@ -158,10 +160,10 @@ be-run:
 			echo "[dev] No tunnel running. EXTERNAL_URL=$(EXTERNAL_URL) (K8s onboarding Jobs will fail if this is localhost)"; \
 		fi; \
 	fi; \
-	cd devops-status-be && go run ./cmd/server
+	cd devops-status-be && GOWORK=off go run ./cmd/server
 
 be-build:
-	cd devops-status-be && go build -o bin/server ./cmd/server
+	cd devops-status-be && GOWORK=off go build -o bin/server ./cmd/server
 
 # --- Frontend ---
 fe-install:

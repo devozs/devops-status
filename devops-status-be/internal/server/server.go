@@ -15,6 +15,7 @@ import (
 	"github.com/devops-status/be/internal/adapter/liveness"
 	"github.com/devops-status/be/internal/auth"
 	"github.com/devops-status/be/internal/config"
+	"github.com/devops-status/be/internal/hlctlbin"
 	"github.com/devops-status/be/internal/engine"
 	"github.com/devops-status/be/internal/scheduler"
 	"github.com/devops-status/be/internal/secrets"
@@ -24,12 +25,13 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	store      *store.Store
-	secret     *secrets.Store
-	session    *auth.SessionManager
-	scheduler  *scheduler.Scheduler
-	http       *http.Server
+	cfg          *config.Config
+	store        *store.Store
+	secret       *secrets.Store
+	session      *auth.SessionManager
+	scheduler    *scheduler.Scheduler
+	http         *http.Server
+	hlctlEnabled bool
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -47,6 +49,9 @@ func New(cfg *config.Config) (*Server, error) {
 
 	sm := auth.NewSessionManager(cfg.SessionKey, cfg.IsProd())
 
+	hlctlEnabled := hlctlbin.Enabled()
+	slog.Info("hlctl local probes", "enabled", hlctlEnabled)
+
 	logMax := cfg.CLILogMaxBytes
 	if logMax <= 0 {
 		logMax = adapter.DefaultCLILogMaxBytes
@@ -54,6 +59,7 @@ func New(cfg *config.Config) (*Server, error) {
 	imgs := adapter.CLIRunnerImages{
 		Alpine:   cfg.CLIRunnerImageAlpine,
 		Ubuntu24: cfg.CLIRunnerImageUbuntu,
+		Toolkit:  cfg.CLIRunnerImageToolkit,
 		Legacy:   cfg.CLIRunnerImage,
 	}
 
@@ -138,27 +144,31 @@ func New(cfg *config.Config) (*Server, error) {
 	adapter.Register(adapter.NewKubernetesAdapter(imgs, k8sRun))
 	adapter.Register(liveness.NewAdapter())
 	adapter.Register(adapter.NewCLIAdapter([]string{"curl", "kubectl", "go", "echo"}, imgs, logMax, backendRun, k8sRun))
+	adapter.Register(adapter.NewHLCTLAdapter(logMax))
 
 	incidentMgr := engine.NewIncidentManager(db)
 	statusEval := engine.NewStatusEvaluator(db, incidentMgr)
 	sched := scheduler.New(db, sec, statusEval, incidentMgr, 5, cfg.K8SInsecureSkipTLS)
 
 	s := &Server{
-		cfg:        cfg,
-		store:      db,
-		secret:     sec,
-		session:    sm,
-		scheduler:  sched,
+		cfg:          cfg,
+		store:        db,
+		secret:       sec,
+		session:      sm,
+		scheduler:    sched,
+		hlctlEnabled: hlctlEnabled,
 	}
 
 	router := s.routes()
 
+	// WriteTimeout 0: allow long SSE streams (telemetry Verify). Per-chunk deadlines use http.ResponseController.
+	// IdleTimeout must exceed long-lived streaming responses; ReadTimeout still bounds the initial request read.
 	s.http = &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		WriteTimeout: 0,
+		IdleTimeout:  2 * time.Hour,
 	}
 
 	return s, nil

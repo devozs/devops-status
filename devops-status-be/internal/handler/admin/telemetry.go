@@ -19,12 +19,13 @@ import (
 )
 
 type TelemetryHandler struct {
-	store  *store.Store
-	secret *secrets.Store
+	store        *store.Store
+	secret       *secrets.Store
+	hlctlEnabled bool
 }
 
-func NewTelemetryHandler(s *store.Store, sec *secrets.Store) *TelemetryHandler {
-	return &TelemetryHandler{store: s, secret: sec}
+func NewTelemetryHandler(s *store.Store, sec *secrets.Store, hlctlEnabled bool) *TelemetryHandler {
+	return &TelemetryHandler{store: s, secret: sec, hlctlEnabled: hlctlEnabled}
 }
 
 type telemetryRequestBody struct {
@@ -110,6 +111,14 @@ func (h *TelemetryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		handler.WriteError(w, http.StatusBadRequest, fmtValidationError(errs))
 		return
 	}
+	if input.Adapter == "hlctl" && !h.hlctlEnabled {
+		handler.WriteError(w, http.StatusBadRequest, "HLCTL telemetry requires kubectl and hlctl in the management image")
+		return
+	}
+	if hintErrs := ValidateTelemetryShellHintRefs(r.Context(), h.store, input.Adapter, cfgBytes); len(hintErrs) > 0 {
+		handler.WriteError(w, http.StatusBadRequest, fmtValidationError(hintErrs))
+		return
+	}
 
 	taken, err := h.store.TelemetryNameExists(r.Context(), input.Name, nil)
 	if err != nil {
@@ -169,6 +178,14 @@ func (h *TelemetryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		handler.WriteError(w, http.StatusBadRequest, fmtValidationError(errs))
 		return
 	}
+	if input.Adapter == "hlctl" && !h.hlctlEnabled {
+		handler.WriteError(w, http.StatusBadRequest, "HLCTL telemetry requires kubectl and hlctl in the management image")
+		return
+	}
+	if hintErrs := ValidateTelemetryShellHintRefs(r.Context(), h.store, input.Adapter, cfgBytes); len(hintErrs) > 0 {
+		handler.WriteError(w, http.StatusBadRequest, fmtValidationError(hintErrs))
+		return
+	}
 
 	taken, err := h.store.TelemetryNameExists(r.Context(), input.Name, &id)
 	if err != nil {
@@ -226,6 +243,8 @@ func stripSensitiveTelemetryConfig(t *model.Telemetry) {
 	delete(m, "username")
 	delete(m, "password")
 	delete(m, "bearer_token")
+	delete(m, "_hlctl_username")
+	delete(m, "_hlctl_password")
 }
 
 func normalizeTelemetryConfig(input *store.CreateTelemetryInput) {

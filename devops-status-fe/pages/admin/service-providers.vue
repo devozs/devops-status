@@ -44,7 +44,9 @@
                       <Database v-else-if="p.provider_type === 'elasticsearch'" :size="16" :stroke-width="2" />
                       <Wrench v-else-if="p.provider_type === 'jenkins'" :size="16" :stroke-width="2" />
                       <Package v-else-if="p.provider_type === 'artifactory'" :size="16" :stroke-width="2" />
+                      <Boxes v-else-if="p.provider_type === 'rancher'" :size="16" :stroke-width="2" />
                       <Search v-else-if="p.provider_type === 'dns'" :size="16" :stroke-width="2" />
+                      <Terminal v-else-if="p.provider_type === 'hlctl'" :size="16" :stroke-width="2" />
                       <Share2 v-else :size="16" :stroke-width="2" />
                     </div>
                     <div class="table-resource-body">
@@ -80,11 +82,20 @@
       @cancel="onDeleteDialogCancel"
     />
 
-    <div v-if="modal" class="modal-overlay" @click.self="closeModal">
+    <AdminUnsavedConfirmDialog
+      v-model="unsavedDialogOpen"
+      :title="unsavedDialogTitle"
+      :warning="unsavedDialogMessage"
+      :confirm-label="unsavedConfirmLabel"
+      :discard-confirm="confirmUnsavedDialog"
+      @cancel="cancelUnsavedDialog"
+    />
+
+    <div v-if="modal" class="modal-overlay" @click.self="requestCloseModal">
       <div class="modal-card modal-card--lg">
         <div class="modal-card__header">
           <h2 class="modal-title">{{ editingId ? 'Edit provider' : 'New provider' }}</h2>
-          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+          <button type="button" class="modal-card__close" aria-label="Close" @click="requestCloseModal">
             <X :size="20" :stroke-width="2" />
           </button>
         </div>
@@ -97,6 +108,7 @@
               v-model="form.provider_type"
               name="provider-type"
               aria-label="Provider type"
+              :grid-columns="providerTypeGridColumns"
               :options="providerOptions"
               @update:model-value="onTypeChange"
             />
@@ -183,6 +195,10 @@
             <template v-if="form.prom_auth === 'bearer'">
               <div class="form-group"><label class="form-label">Token</label><input v-model="credBearer" type="password" class="form-input" autocomplete="new-password" /></div>
             </template>
+            <div class="form-group">
+              <label><input v-model="form.prom_insecure_skip_tls" type="checkbox" /> Skip TLS verification (private CA / self-signed)</label>
+              <p class="hint">Use only when the endpoint uses a certificate not in this service’s trust store. Prefer adding your CA to the management pod trust bundle for production.</p>
+            </div>
             <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
           </template>
 
@@ -258,6 +274,47 @@
             <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
           </template>
 
+          <template v-else-if="form.provider_type === 'rancher'">
+            <h4 class="sub">{{ providerTypeLabel('rancher') }}</h4>
+            <div class="form-group">
+              <label class="form-label">Base URL<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="form.rancher_base_url" class="form-input" placeholder="https://rancher.example.com" />
+            </div>
+            <p class="hint">
+              <strong>None</strong> uses <code class="inline-code">GET /ping</code> (any HTTP 2xx). <strong>API key</strong> uses
+              <code class="inline-code">GET /v3/</code>. Rancher’s v3 API expects
+              <a
+                href="https://ranchermanager.docs.rancher.com/api/v3-rancher-api-guide#authentication"
+                target="_blank"
+                rel="noopener noreferrer"
+                >HTTP Basic</a
+              >
+              with your access key and secret — paste the single <strong>Bearer Token</strong> line from the UI
+              (<code class="inline-code">accessKey:secretKey</code>). No separate username field.
+            </p>
+            <div class="form-group">
+              <label class="form-label">Auth</label>
+              <AdminSelect v-model="form.rancher_auth" aria-label="Rancher auth" :options="rancherAuthSelectOptions" />
+            </div>
+            <template v-if="form.rancher_auth === 'bearer'">
+              <div class="form-group">
+                <label class="form-label">Bearer Token (accessKey:secretKey)</label>
+                <input
+                  v-model="credBearer"
+                  type="password"
+                  class="form-input"
+                  autocomplete="new-password"
+                  placeholder="token-xxxxx:yyyyyyyy…"
+                />
+              </div>
+            </template>
+            <div class="form-group">
+              <label><input v-model="form.rancher_insecure_skip_tls" type="checkbox" /> Skip TLS verification (private CA / self-signed)</label>
+              <p class="hint">Use only when the Rancher URL uses a certificate not in this service’s trust store.</p>
+            </div>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
           <template v-else-if="form.provider_type === 'dns'">
             <h4 class="sub">{{ providerTypeLabel('dns') }}</h4>
             <div class="form-group">
@@ -275,6 +332,23 @@
             <p class="hint">Leave nameserver empty to use the host resolver; otherwise queries that server on UDP port 53.</p>
           </template>
 
+          <template v-else-if="form.provider_type === 'hlctl'">
+            <h4 class="sub">{{ providerTypeLabel('hlctl') }}</h4>
+            <p class="hint">
+              Credentials are used to run <code class="mono">hlctl kubeconfig</code> on the management server. No extra config is stored beyond
+              these secrets.
+            </p>
+            <div class="form-group">
+              <label class="form-label">Username<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="credUser" class="form-input" autocomplete="off" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password<span class="form-label-required" aria-hidden="true">*</span></label>
+              <input v-model="credPass" type="password" class="form-input" autocomplete="new-password" />
+            </div>
+            <p v-if="editingId && hasStoredCreds" class="hint">{{ storedCredsHint }}</p>
+          </template>
+
           <div v-if="verifyResult" class="verify-out" :class="verifyResult.ok ? 'verify-out--ok' : 'verify-out--fail'">
             <template v-if="verifyResult.ok">
               <strong>{{ verifyOkLabel }}</strong>
@@ -284,6 +358,7 @@
               <strong>Verification failed</strong>
               <span v-if="verifyResult.error"> — {{ verifyResult.error }}</span>
             </template>
+            <pre v-if="verifyResult.log?.trim()" class="verify-log">{{ verifyResult.log }}</pre>
           </div>
           <p v-if="saveBlockedHint" class="hint verify-hint">{{ saveBlockedHint }}</p>
           <p v-if="formError" class="field-error">{{ formError }}</p>
@@ -295,7 +370,7 @@
               </button>
             </div>
             <div class="modal-actions-right">
-              <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
+              <button type="button" class="btn btn-modal-cancel" @click="requestCloseModal">Cancel</button>
               <button type="submit" class="btn btn-primary" :disabled="saving || !canSave">Save</button>
             </div>
           </div>
@@ -306,10 +381,32 @@
 </template>
 
 <script setup lang="ts">
-import { Activity, Database, Globe, Package, Plus, Search, Share2, Wrench, X } from 'lucide-vue-next'
+import {
+  Activity,
+  Boxes,
+  Database,
+  Globe,
+  Package,
+  Plus,
+  Search,
+  Share2,
+  Terminal,
+  Wrench,
+  X,
+} from 'lucide-vue-next'
+import { computed, nextTick, onMounted } from 'vue'
 
 definePageMeta({ layout: 'admin' })
 const { apiFetch } = useApi()
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
 
 type ProviderType =
   | 'tcp'
@@ -318,7 +415,9 @@ type ProviderType =
   | 'elasticsearch'
   | 'jenkins'
   | 'artifactory'
+  | 'rancher'
   | 'dns'
+  | 'hlctl'
 
 const PROVIDER_TYPES: ProviderType[] = [
   'tcp',
@@ -327,18 +426,44 @@ const PROVIDER_TYPES: ProviderType[] = [
   'elasticsearch',
   'jenkins',
   'artifactory',
+  'rancher',
   'dns',
+  'hlctl',
 ]
 
-const providerOptions: { value: ProviderType; label: string }[] = [
+const ALL_PROVIDER_OPTIONS: { value: ProviderType; label: string }[] = [
   { value: 'tcp', label: 'TCP' },
   { value: 'prometheus', label: 'Prometheus' },
   { value: 'grafana', label: 'Grafana' },
   { value: 'elasticsearch', label: 'Elasticsearch' },
   { value: 'jenkins', label: 'Jenkins' },
   { value: 'artifactory', label: 'Artifactory' },
+  { value: 'rancher', label: 'Rancher' },
   { value: 'dns', label: 'DNS checker' },
+  { value: 'hlctl', label: 'HLCTL' },
 ]
+
+const capabilities = ref({ hlctl_enabled: false })
+
+async function loadCapabilities() {
+  try {
+    capabilities.value = (await apiFetch('/api/admin/capabilities')) as { hlctl_enabled: boolean }
+  } catch {
+    capabilities.value = { hlctl_enabled: false }
+  }
+}
+
+const providerOptions = computed(() => {
+  if (capabilities.value.hlctl_enabled) return ALL_PROVIDER_OPTIONS
+  return ALL_PROVIDER_OPTIONS.filter((o) => o.value !== 'hlctl')
+})
+
+const providerTypeGridColumns = computed(() => {
+  const n = providerOptions.value.length
+  if (n >= 9) return 3
+  if (n === 8) return 4
+  return n
+})
 
 const promAuthSelectOptions = [
   { value: 'none', label: 'None' },
@@ -353,6 +478,10 @@ const jenkinsAuthSelectOptions = [
   { value: 'none', label: 'None (anonymous read)' },
   { value: 'basic', label: 'Basic' },
 ]
+const rancherAuthSelectOptions = [
+  { value: 'none', label: 'None (/ping)' },
+  { value: 'bearer', label: 'API key (Account & API Keys)' },
+]
 const dnsRecordTypeOptions = [
   { value: 'a', label: 'A' },
   { value: 'aaaa', label: 'AAAA' },
@@ -361,7 +490,7 @@ const dnsRecordTypeOptions = [
 ]
 
 function providerTypeLabel(pt: string | undefined): string {
-  const o = providerOptions.find((x) => x.value === pt)
+  const o = ALL_PROVIDER_OPTIONS.find((x) => x.value === pt)
   return o?.label ?? String(pt ?? '')
 }
 
@@ -427,6 +556,7 @@ function requestRemoveProvider(p: Row) {
 }
 
 type HttpAuth = 'none' | 'basic'
+type RancherAuth = 'none' | 'bearer'
 
 type FormState = {
   provider_type: ProviderType
@@ -436,6 +566,7 @@ type FormState = {
   image_url: string
   prom_endpoint: string
   prom_auth: 'none' | 'basic' | 'bearer'
+  prom_insecure_skip_tls: boolean
   grafana_base_url: string
   grafana_auth: HttpAuth
   es_url: string
@@ -444,6 +575,9 @@ type FormState = {
   jenkins_auth: HttpAuth
   artifactory_base_url: string
   artifactory_auth: HttpAuth
+  rancher_base_url: string
+  rancher_auth: RancherAuth
+  rancher_insecure_skip_tls: boolean
   dns_hostname: string
   dns_record_type: 'a' | 'aaaa' | 'cname' | 'txt'
   dns_nameserver: string
@@ -458,6 +592,7 @@ function emptyForm(): FormState {
     image_url: '',
     prom_endpoint: '',
     prom_auth: 'none',
+    prom_insecure_skip_tls: false,
     grafana_base_url: '',
     grafana_auth: 'none',
     es_url: '',
@@ -466,6 +601,9 @@ function emptyForm(): FormState {
     jenkins_auth: 'none',
     artifactory_base_url: '',
     artifactory_auth: 'none',
+    rancher_base_url: '',
+    rancher_auth: 'none',
+    rancher_insecure_skip_tls: false,
     dns_hostname: '',
     dns_record_type: 'a',
     dns_nameserver: '',
@@ -474,6 +612,7 @@ function emptyForm(): FormState {
 
 const modal = ref(false)
 const editingId = ref<string | null>(null)
+const providerFormBaseline = ref('')
 const hasStoredCreds = ref(false)
 const form = ref<FormState>(emptyForm())
 const credUser = ref('')
@@ -482,7 +621,7 @@ const credBearer = ref('')
 const formError = ref('')
 const saving = ref(false)
 const verifyBusy = ref(false)
-const verifyResult = ref<{ ok: boolean; error?: string; latency_ms?: number } | null>(null)
+const verifyResult = ref<{ ok: boolean; error?: string; latency_ms?: number; log?: string } | null>(null)
 const lastVerifyFingerprint = ref<string | null>(null)
 const rowImageFailed = reactive<Record<string, boolean>>({})
 const imagePreviewBroken = ref(false)
@@ -509,6 +648,7 @@ const verifyOkLabel = computed(() => {
   const pt = form.value.provider_type
   if (pt === 'tcp') return 'Reachable'
   if (pt === 'dns') return 'DNS OK'
+  if (pt === 'hlctl') return 'HLCTL kubeconfig OK'
   return `${providerTypeLabel(pt)} OK`
 })
 
@@ -527,6 +667,7 @@ function providerMetaLine(p: Row) {
       return String(cfg.endpoint || '').trim() || '—'
     case 'grafana':
     case 'artifactory':
+    case 'rancher':
       return String(cfg.base_url || '').trim() || '—'
     case 'elasticsearch':
     case 'jenkins':
@@ -536,6 +677,8 @@ function providerMetaLine(p: Row) {
       const rt = String(cfg.record_type || 'a').trim()
       return h ? `${h} (${rt.toUpperCase()})` : '—'
     }
+    case 'hlctl':
+      return 'HLCTL credentials'
     default:
       return '—'
   }
@@ -562,6 +705,7 @@ function verifyFingerprint(): string {
         provider_type: 'prometheus',
         endpoint: f.prom_endpoint.trim(),
         auth_method: f.prom_auth,
+        insecure_skip_tls: f.prom_insecure_skip_tls,
       })
     case 'grafana':
       return JSON.stringify({
@@ -587,6 +731,13 @@ function verifyFingerprint(): string {
         base_url: f.artifactory_base_url.trim(),
         auth_method: f.artifactory_auth,
       })
+    case 'rancher':
+      return JSON.stringify({
+        provider_type: 'rancher',
+        base_url: f.rancher_base_url.trim(),
+        auth_method: f.rancher_auth,
+        insecure_skip_tls: f.rancher_insecure_skip_tls,
+      })
     case 'dns':
       return JSON.stringify({
         provider_type: 'dns',
@@ -594,6 +745,8 @@ function verifyFingerprint(): string {
         dns_record_type: f.dns_record_type,
         dns_nameserver: f.dns_nameserver.trim(),
       })
+    case 'hlctl':
+      return JSON.stringify({ provider_type: 'hlctl' })
     default:
       return ''
   }
@@ -673,8 +826,25 @@ function validateLocal(): string {
       }
       break
     }
+    case 'rancher': {
+      if (!isHttpsURL(f.rancher_base_url)) return 'Rancher base URL must be a valid http(s) URL'
+      if (f.rancher_auth === 'bearer') {
+        const need = !editingId.value || !hasStoredCreds.value
+        if (need && !credBearer.value.trim()) {
+          return 'API key auth requires the full Bearer Token from Rancher (accessKey:secretKey) for new providers'
+        }
+      }
+      break
+    }
     case 'dns': {
       if (!f.dns_hostname.trim()) return 'Hostname is required'
+      break
+    }
+    case 'hlctl': {
+      const need = !editingId.value || !hasStoredCreds.value
+      if (need && (!credUser.value.trim() || !credPass.value)) {
+        return 'HLCTL requires username and password for new providers'
+      }
       break
     }
     default:
@@ -743,8 +913,20 @@ const canRunVerify = computed(() => {
       }
       return true
     }
+    case 'rancher': {
+      if (!isHttpsURL(f.rancher_base_url)) return false
+      if (f.rancher_auth === 'bearer') {
+        if (credBearer.value.trim()) return true
+        return stored
+      }
+      return true
+    }
     case 'dns':
       return Boolean(f.dns_hostname.trim())
+    case 'hlctl': {
+      if (credUser.value.trim() && credPass.value) return true
+      return stored
+    }
     default:
       return false
   }
@@ -812,6 +994,7 @@ watch(
       form.value.port,
       form.value.prom_endpoint,
       form.value.prom_auth,
+      form.value.prom_insecure_skip_tls,
       form.value.grafana_base_url,
       form.value.grafana_auth,
       form.value.es_url,
@@ -820,6 +1003,9 @@ watch(
       form.value.jenkins_auth,
       form.value.artifactory_base_url,
       form.value.artifactory_auth,
+      form.value.rancher_base_url,
+      form.value.rancher_auth,
+      form.value.rancher_insecure_skip_tls,
       form.value.dns_hostname,
       form.value.dns_record_type,
       form.value.dns_nameserver,
@@ -851,12 +1037,24 @@ function onTypeChange() {
   clearVerifyOnConnectionChange()
 }
 
+function captureProviderFormSnapshot(): string {
+  return JSON.stringify({
+    form: form.value,
+    credUser: credUser.value,
+    credPass: credPass.value,
+    credBearer: credBearer.value,
+  })
+}
+
 function openCreate() {
   editingId.value = null
   hasStoredCreds.value = false
   form.value = emptyForm()
   resetModalState()
   modal.value = true
+  void nextTick(() => {
+    providerFormBaseline.value = captureProviderFormSnapshot()
+  })
 }
 
 function editRow(p: Row) {
@@ -875,6 +1073,7 @@ function editRow(p: Row) {
     case 'prometheus':
       next.prom_endpoint = String(cfg.endpoint || '')
       next.prom_auth = (String(cfg.auth_method || 'none').toLowerCase() as 'none' | 'basic' | 'bearer') || 'none'
+      next.prom_insecure_skip_tls = Boolean(cfg.insecure_skip_tls)
       break
     case 'grafana':
       next.grafana_base_url = String(cfg.base_url || '')
@@ -891,6 +1090,14 @@ function editRow(p: Row) {
     case 'artifactory':
       next.artifactory_base_url = String(cfg.base_url || '')
       next.artifactory_auth = (String(cfg.auth_method || 'none').toLowerCase() as HttpAuth) === 'basic' ? 'basic' : 'none'
+      break
+    case 'rancher':
+      next.rancher_base_url = String(cfg.base_url || '')
+      {
+        const am = String(cfg.auth_method || 'none').toLowerCase()
+        next.rancher_auth = am === 'bearer' ? 'bearer' : 'none'
+      }
+      next.rancher_insecure_skip_tls = Boolean(cfg.insecure_skip_tls)
       break
     case 'dns':
       next.dns_hostname = String(cfg.hostname || '')
@@ -909,13 +1116,23 @@ function editRow(p: Row) {
   hasStoredCreds.value = Boolean(p.has_stored_credentials ?? p.has_prometheus_credentials)
   modal.value = true
   if (nameTrimmed.value.length >= 3) scheduleNameAvailabilityCheck()
+  void nextTick(() => {
+    providerFormBaseline.value = captureProviderFormSnapshot()
+  })
 }
 
-function closeModal() {
+function performCloseModal() {
   modal.value = false
   editingId.value = null
   hasStoredCreds.value = false
   resetModalState()
+}
+
+function requestCloseModal() {
+  requestModalClose(performCloseModal, {
+    isDirty: () => captureProviderFormSnapshot() !== providerFormBaseline.value,
+    message: 'You have unsaved changes to this provider. Discard them?',
+  })
 }
 
 function onRowImageError(id: string) {
@@ -924,7 +1141,7 @@ function onRowImageError(id: string) {
 
 function appendCreds(
   body: Record<string, unknown>,
-  auth: 'none' | 'basic' | 'bearer' | HttpAuth,
+  auth: 'none' | 'basic' | 'bearer' | HttpAuth | RancherAuth,
   includeBearer: boolean,
 ) {
   const creds: Record<string, string> = {}
@@ -955,6 +1172,7 @@ function buildVerifyBody(): Record<string, unknown> {
     case 'prometheus':
       body.endpoint = f.prom_endpoint.trim()
       body.auth_method = f.prom_auth
+      body.insecure_skip_tls = f.prom_insecure_skip_tls
       appendCreds(body, f.prom_auth, true)
       break
     case 'grafana':
@@ -977,11 +1195,24 @@ function buildVerifyBody(): Record<string, unknown> {
       body.auth_method = f.artifactory_auth
       appendCreds(body, f.artifactory_auth, false)
       break
+    case 'rancher':
+      body.base_url = f.rancher_base_url.trim()
+      body.auth_method = f.rancher_auth
+      body.insecure_skip_tls = f.rancher_insecure_skip_tls
+      appendCreds(body, f.rancher_auth, true)
+      break
     case 'dns':
       body.dns_hostname = f.dns_hostname.trim()
       body.dns_record_type = f.dns_record_type
       body.dns_nameserver = f.dns_nameserver.trim()
       break
+    case 'hlctl': {
+      const creds: Record<string, string> = {}
+      if (credUser.value.trim()) creds.username = credUser.value.trim()
+      if (credPass.value) creds.password = credPass.value
+      if (Object.keys(creds).length) body.credentials = creds
+      break
+    }
     default:
       break
   }
@@ -996,11 +1227,12 @@ async function runVerify() {
     const res = (await apiFetch('/api/admin/service-providers/verify', {
       method: 'POST',
       body: JSON.stringify(buildVerifyBody()),
-    })) as { ok?: boolean; error?: string; latency_ms?: number }
+    })) as { ok?: boolean; error?: string; latency_ms?: number; log?: string }
     verifyResult.value = {
       ok: res.ok === true,
       error: typeof res.error === 'string' ? res.error : undefined,
       latency_ms: typeof res.latency_ms === 'number' ? res.latency_ms : undefined,
+      log: typeof res.log === 'string' ? res.log : undefined,
     }
     if (res.ok === true) {
       lastVerifyFingerprint.value = verifyFingerprint()
@@ -1021,7 +1253,11 @@ function buildConfigJsonForSave(pt: ProviderType): Record<string, unknown> {
     case 'tcp':
       return {}
     case 'prometheus':
-      return { endpoint: f.prom_endpoint.trim(), auth_method: f.prom_auth }
+      return {
+        endpoint: f.prom_endpoint.trim(),
+        auth_method: f.prom_auth,
+        insecure_skip_tls: f.prom_insecure_skip_tls,
+      }
     case 'grafana':
       return { base_url: f.grafana_base_url.trim(), auth_method: f.grafana_auth }
     case 'elasticsearch':
@@ -1030,6 +1266,12 @@ function buildConfigJsonForSave(pt: ProviderType): Record<string, unknown> {
       return { url: f.jenkins_url.trim(), auth_method: f.jenkins_auth }
     case 'artifactory':
       return { base_url: f.artifactory_base_url.trim(), auth_method: f.artifactory_auth }
+    case 'rancher':
+      return {
+        base_url: f.rancher_base_url.trim(),
+        auth_method: f.rancher_auth,
+        insecure_skip_tls: f.rancher_insecure_skip_tls,
+      }
     case 'dns': {
       const o: Record<string, unknown> = {
         hostname: f.dns_hostname.trim(),
@@ -1038,6 +1280,8 @@ function buildConfigJsonForSave(pt: ProviderType): Record<string, unknown> {
       if (f.dns_nameserver.trim()) o.nameserver = f.dns_nameserver.trim()
       return o
     }
+    case 'hlctl':
+      return {}
     default:
       return {}
   }
@@ -1047,6 +1291,12 @@ function buildCredentialsPayload(): Record<string, string> | undefined {
   const f = form.value
   const pt = f.provider_type
   const out: Record<string, string> = {}
+
+  if (pt === 'hlctl') {
+    if (credUser.value.trim()) out.username = credUser.value.trim()
+    if (credPass.value) out.password = credPass.value
+    return Object.keys(out).length ? out : undefined
+  }
 
   if (pt === 'prometheus') {
     if (f.prom_auth === 'none') return undefined
@@ -1058,6 +1308,14 @@ function buildCredentialsPayload(): Record<string, string> | undefined {
       out.bearer_token = credBearer.value.trim()
     }
     return Object.keys(out).length ? out : undefined
+  }
+
+  if (pt === 'rancher') {
+    if (f.rancher_auth === 'none') return undefined
+    if (f.rancher_auth === 'bearer' && credBearer.value.trim()) {
+      return { bearer_token: credBearer.value.trim() }
+    }
+    return undefined
   }
 
   let basic = false
@@ -1106,7 +1364,7 @@ async function save() {
     } else {
       await apiFetch('/api/admin/service-providers', { method: 'POST', body: JSON.stringify(body) })
     }
-    closeModal()
+    performCloseModal()
     await load()
   } catch (e: unknown) {
     const apiErr = (e as { data?: { error?: string } })?.data?.error
@@ -1116,7 +1374,10 @@ async function save() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadCapabilities()
+})
 
 onUnmounted(() => {
   if (nameCheckTimer) clearTimeout(nameCheckTimer)

@@ -173,7 +173,7 @@
     </div>
 
     <!-- Manual register / add token -->
-    <div v-if="manualModalCluster" class="modal-overlay" @click.self="manualModalCluster = null">
+    <div v-if="manualModalCluster" class="modal-overlay" @click.self="requestCloseManualModal">
       <div class="modal-card modal-card--wide">
         <h2 class="modal-title">{{ manualModalMode === 'register' ? 'Manual cluster registration' : 'Add Kubernetes API token' }}</h2>
         <p class="modal-subtitle">Paste a bearer token the app will use for <code class="ping-code">GET /version</code> against your stored API endpoint.</p>
@@ -189,13 +189,41 @@
           with the correct context selected (<code>kubectl config use-context …</code>).
         </p>
         <p v-else class="mono hint-cmd">kubectl create token devops-status-agent -n devops-status-system --duration=24h</p>
+
+        <div class="shell-probe-rbac-section">
+          <h3 class="modal-section-title">In-cluster shell probes (telemetry toolkit)</h3>
+          <p class="help-note">
+            The bearer token you paste authorizes <strong>this app</strong> to reach your API (Verify, legacy Kubernetes checks, and creating probe Jobs).
+            Commands in <strong>Shell on cluster</strong> run <em>inside</em> the cluster as
+            <code class="ping-code">devops-status-agent</code> in <code class="ping-code">devops-status-system</code>.
+            Onboarding applies that RBAC automatically; if you only paste a token, apply the manifest below once on the target cluster (same context you use for <code class="ping-code">kubectl create token</code>).
+          </p>
+          <p v-if="shellProbeYamlLoading" class="help-note">Loading manifest…</p>
+          <p v-else-if="shellProbeYamlError" class="form-error">{{ shellProbeYamlError }}</p>
+          <template v-else-if="shellProbeApplyCommand">
+            <p class="help-note">
+              On the target cluster (correct kubectl context), run the same style of command as auto onboarding:
+              <code class="ping-code">kubectl apply -f - &lt;&lt;'EOF'</code> … manifest … <code class="ping-code">EOF</code>.
+            </p>
+            <div class="command-block">
+              <div class="command-header">
+                <label class="form-label">Run on target cluster</label>
+                <button type="button" class="btn btn-sm" @click="copyShellProbeApplyCommand">
+                  {{ copiedShellApplyCmd ? 'Copied!' : 'Copy' }}
+                </button>
+              </div>
+              <pre class="command-pre command-pre--rbac">{{ shellProbeApplyCommand }}</pre>
+            </div>
+          </template>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Bearer token (paste full JWT)</label>
           <textarea v-model="manualSaToken" class="form-input token-area" rows="4" placeholder="eyJhbGciOiJSUzI1NiIs..." />
         </div>
         <p v-if="manualError" class="form-error">{{ manualError }}</p>
         <div class="modal-actions">
-          <button type="button" class="btn" @click="manualModalCluster = null">Cancel</button>
+          <button type="button" class="btn" @click="requestCloseManualModal">Cancel</button>
           <button type="button" class="btn btn-primary" :disabled="manualSubmitting" @click="submitManualModal">
             {{ manualSubmitting ? 'Saving…' : 'Save' }}
           </button>
@@ -204,7 +232,7 @@
     </div>
 
     <!-- Create modal -->
-    <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
+    <div v-if="showCreate" class="modal-overlay" @click.self="requestCloseCreateModal">
       <div class="modal-card">
         <h2 class="modal-title">Register cluster</h2>
         <p class="modal-subtitle">Create a cluster record before running onboarding in the target cluster.</p>
@@ -222,7 +250,7 @@
             <span class="form-hint">Agent and RBAC resources will be deployed in this namespace.</span>
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn" @click="showCreate = false">Cancel</button>
+            <button type="button" class="btn" @click="requestCloseCreateModal">Cancel</button>
             <button type="submit" class="btn btn-primary">Create</button>
           </div>
         </form>
@@ -240,15 +268,33 @@
       @confirm="onDeleteConfirm"
       @cancel="onDeleteDialogCancel"
     />
+
+    <AdminUnsavedConfirmDialog
+      v-model="unsavedDialogOpen"
+      :title="unsavedDialogTitle"
+      :warning="unsavedDialogMessage"
+      :confirm-label="unsavedConfirmLabel"
+      :discard-confirm="confirmUnsavedDialog"
+      @cancel="cancelUnsavedDialog"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { ChevronRight, Plus } from 'lucide-vue-next'
 
 definePageMeta({ layout: 'admin' })
-const { apiFetch } = useApi()
+const { apiFetch, baseURL } = useApi()
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
 
 const clusters = ref<any[]>([])
 const backendContext = ref<{ external_url: string; is_dev: boolean } | null>(null)
@@ -264,6 +310,19 @@ const manualModalMode = ref<'register' | 'token'>('register')
 const manualSaToken = ref('')
 const manualError = ref('')
 const manualSubmitting = ref(false)
+
+const shellProbeRbacYaml = ref('')
+const shellProbeYamlLoading = ref(false)
+const shellProbeYamlError = ref('')
+const copiedShellApplyCmd = ref(false)
+
+// Same heredoc pattern as onboarding `command` from POST …/onboard.
+const shellProbeApplyCommand = computed(() => {
+  const y = shellProbeRbacYaml.value
+  if (!y.trim()) return ''
+  const body = y.endsWith('\n') ? y : `${y}\n`
+  return `kubectl apply -f - <<'EOF'\n${body}EOF`
+})
 
 type PingState = { loading?: boolean; ok?: boolean; message?: string; k8s_version?: string; at?: number }
 
@@ -465,6 +524,78 @@ function formatExpiry(iso: string) {
   return new Date(iso).toLocaleString()
 }
 const form = ref({ name: '', endpoint: '', default_namespace: 'devops-status-system' })
+const createClusterFormBaseline = ref('')
+
+function captureCreateClusterSnapshot(): string {
+  return JSON.stringify({ name: form.value.name.trim(), endpoint: form.value.endpoint.trim() })
+}
+
+function performCloseCreateModal() {
+  showCreate.value = false
+  form.value = { name: '', endpoint: '', default_namespace: 'devops-status-system' }
+}
+
+function requestCloseCreateModal() {
+  requestModalClose(performCloseCreateModal, {
+    isDirty: () => captureCreateClusterSnapshot() !== createClusterFormBaseline.value,
+    message: 'You have unsaved cluster registration details. Discard them?',
+  })
+}
+
+function performCloseManualModal() {
+  manualModalCluster.value = null
+  manualSaToken.value = ''
+  manualError.value = ''
+  shellProbeRbacYaml.value = ''
+  shellProbeYamlError.value = ''
+  shellProbeYamlLoading.value = false
+  copiedShellApplyCmd.value = false
+}
+
+async function loadShellProbeRbacYaml() {
+  shellProbeYamlLoading.value = true
+  shellProbeYamlError.value = ''
+  shellProbeRbacYaml.value = ''
+  try {
+    const res = await fetch(`${baseURL}/api/admin/k8s-clusters/shell-probe-rbac.yaml`, {
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      shellProbeYamlError.value = `Could not load manifest (HTTP ${res.status}).`
+      return
+    }
+    shellProbeRbacYaml.value = await res.text()
+  } catch (e: any) {
+    shellProbeYamlError.value = e?.message || 'Request failed'
+  } finally {
+    shellProbeYamlLoading.value = false
+  }
+}
+
+function copyShellProbeApplyCommand() {
+  const cmd = shellProbeApplyCommand.value
+  if (!cmd) return
+  navigator.clipboard.writeText(cmd)
+  copiedShellApplyCmd.value = true
+  setTimeout(() => {
+    copiedShellApplyCmd.value = false
+  }, 2000)
+}
+
+function requestCloseManualModal() {
+  requestModalClose(performCloseManualModal, {
+    isDirty: () => manualSaToken.value.trim() !== '',
+    message: 'You pasted a token but did not save. Discard it?',
+  })
+}
+
+watch(showCreate, (open) => {
+  if (open) {
+    void nextTick(() => {
+      createClusterFormBaseline.value = captureCreateClusterSnapshot()
+    })
+  }
+})
 
 async function load() {
   loadError.value = ''
@@ -494,8 +625,7 @@ async function loadAndVerifyConnected() {
 }
 async function createCluster() {
   await apiFetch('/api/admin/k8s-clusters', { method: 'POST', body: JSON.stringify(form.value) })
-  showCreate.value = false
-  form.value = { name: '', endpoint: '', default_namespace: 'devops-status-system' }
+  performCloseCreateModal()
   await load()
 }
 async function onboard(c: any) {
@@ -508,6 +638,7 @@ function openManualModal(c: any) {
   manualModalMode.value = 'register'
   manualSaToken.value = ''
   manualError.value = ''
+  void loadShellProbeRbacYaml()
 }
 
 function openTokenModal(c: any) {
@@ -515,6 +646,7 @@ function openTokenModal(c: any) {
   manualModalMode.value = 'token'
   manualSaToken.value = ''
   manualError.value = ''
+  void loadShellProbeRbacYaml()
 }
 
 async function submitManualModal() {
@@ -542,7 +674,7 @@ async function submitManualModal() {
       })
     }
     const savedId = manualModalCluster.value.id
-    manualModalCluster.value = null
+    performCloseManualModal()
     await load()
     const row = clusters.value.find(x => x.id === savedId)
     if (row?.status === 'connected' && row?.has_api_credential) await verifyCluster(row)
@@ -596,6 +728,8 @@ onMounted(boot)
 .command-block { margin-bottom: 16px; }
 .command-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .command-pre { background: #1f2937; color: #e5e7eb; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 0.8rem; line-height: 1.5; white-space: pre; overflow-x: auto; max-height: 400px; overflow-y: auto; }
+.command-pre--rbac { max-height: 220px; font-size: 0.72rem; }
+.shell-probe-rbac-section { margin: 16px 0; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .token-info { font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px; }
 .help-note { font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 12px; line-height: 1.45; }
 .hint-cmd { font-size: 0.8rem; background: #f3f4f6; padding: 8px 10px; border-radius: 6px; margin-bottom: 12px; word-break: break-all; }

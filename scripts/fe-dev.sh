@@ -16,5 +16,8 @@ if command -v lsof >/dev/null 2>&1; then
   lsof -t -i:"$FE_PORT" | xargs kill -9 2>/dev/null || true
 fi
 
+# .env.dev sets PORT=8080 for the Go API; Vite/Nuxt also honor PORT, so override for the dev server only.
+export PORT="$FE_PORT"
+
 cd devops-status-fe
 exec npm run dev

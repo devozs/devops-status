@@ -44,6 +44,24 @@ type artifactoryLivenessCfg struct {
 	DownloadMaxBytes       int    `json:"download_max_bytes,omitempty"`
 }
 
+type rancherLivenessCfg struct {
+	BaseURL         string `json:"base_url"`
+	AuthMethod      string `json:"auth_method"`
+	BearerToken     string `json:"bearer_token,omitempty"`
+	InsecureSkipTLS bool   `json:"insecure_skip_tls,omitempty"`
+	TimeoutMs       int    `json:"timeout_ms,omitempty"`
+}
+
+func probeRancher(ctx context.Context, cfg json.RawMessage) (*adapter.ProbeResult, error) {
+	var c rancherLivenessCfg
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return nil, fmt.Errorf("parse rancher liveness config: %w", err)
+	}
+	start := time.Now()
+	ms, err := providerverify.VerifyRancher(ctx, c.BaseURL, c.AuthMethod, c.BearerToken, c.InsecureSkipTLS)
+	return httpStyleResult(start, ms, err, map[string]any{"liveness_check": CheckRancher})
+}
+
 func probeGrafana(ctx context.Context, cfg json.RawMessage) (*adapter.ProbeResult, error) {
 	var c grafanaLivenessCfg
 	if err := json.Unmarshal(cfg, &c); err != nil {

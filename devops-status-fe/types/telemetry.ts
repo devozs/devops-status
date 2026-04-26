@@ -1,4 +1,4 @@
-export type AdapterType = 'http' | 'prometheus' | 'kubernetes' | 'liveness' | 'cli'
+export type AdapterType = 'http' | 'prometheus' | 'kubernetes' | 'liveness' | 'cli' | 'hlctl'
 
 /** Service provider types eligible for liveness (service_provider source). */
 export const LIVENESS_SERVICE_PROVIDER_TYPES = [
@@ -7,6 +7,7 @@ export const LIVENESS_SERVICE_PROVIDER_TYPES = [
   'elasticsearch',
   'jenkins',
   'artifactory',
+  'rancher',
 ] as const
 export type LivenessServiceProviderType = (typeof LIVENESS_SERVICE_PROVIDER_TYPES)[number]
 
@@ -25,7 +26,7 @@ export type CliMetricValueKind = 'number' | 'text'
 
 export const K8S_CHECK_TYPES = ['api_health', 'deployment_ready', 'pod_status', 'node_status'] as const
 
-export const CLI_RUNNER_PRESETS = ['alpine', 'ubuntu_24'] as const
+export const CLI_RUNNER_PRESETS = ['toolkit', 'alpine', 'ubuntu_24'] as const
 export type CliRunnerPreset = (typeof CLI_RUNNER_PRESETS)[number]
 
 export interface HttpConfig {
@@ -57,8 +58,17 @@ export interface KubernetesConfig {
   container_prep?: string
   runner?: CliRunnerPreset
   runner_image?: string
+  /** Passed into the Job container (e.g. base64 kubeconfig); admin-visible in API. */
+  env?: Record<string, string>
+  /** Pod nodeSelector for shell Jobs on the cluster. */
+  node_selector?: Record<string, string>
   parse_json?: boolean
   success_exit?: number
+  /** Optional link to a telemetry shell hint (must match hint body on save). */
+  job_env_hint_id?: string
+  job_node_selector_hint_id?: string
+  container_prep_hint_id?: string
+  probe_shell_hint_id?: string
 }
 
 /** Optional Artifactory bandwidth sample (liveness + service_provider + Artifactory SP only). */
@@ -107,15 +117,61 @@ export interface CliConfig {
   cli_shell?: string
   /** Shell snippet run before the probe command (same sh -c as the command). */
   container_prep?: string
-  /** Base image preset; server maps to CLI_RUNNER_IMAGE_ALPINE / CLI_RUNNER_IMAGE_UBUNTU_24. */
+  /** Base image preset; server maps to CLI_RUNNER_IMAGE_TOOLKIT / _ALPINE / _UBUNTU_24. */
   runner?: CliRunnerPreset
   /** Optional exact image ref; must match a server-configured allowlist. */
   runner_image?: string
   env?: Record<string, string>
+  /** Pod nodeSelector when the probe runs as a Kubernetes Job (k8s_cluster or backend with CLI_BACKEND_EXECUTOR=k8s). */
+  node_selector?: Record<string, string>
   parse_json: boolean
   execution_target: ExecutionTarget
   cluster_id?: string
   k8s_version?: string
+  job_env_hint_id?: string
+  job_node_selector_hint_id?: string
+  container_prep_hint_id?: string
+  probe_shell_hint_id?: string
+}
+
+/** HLCTL: runs in management after hlctl kubeconfig; credentials from HLCTL service provider. */
+export interface HlctlConfig {
+  service_provider_id: string
+  command?: string
+  args?: string[]
+  cli_shell?: string
+  container_prep?: string
+  env?: Record<string, string>
+  parse_json: boolean
+  job_env_hint_id?: string
+  container_prep_hint_id?: string
+  probe_shell_hint_id?: string
+}
+
+export type ShellHintKind = 'job_env' | 'job_node_selector' | 'container_prep' | 'probe_shell'
+
+export const SHELL_HINT_KINDS: ShellHintKind[] = [
+  'job_env',
+  'job_node_selector',
+  'container_prep',
+  'probe_shell',
+]
+
+export interface TelemetryShellHintRow {
+  id: string
+  kind: ShellHintKind
+  title: string
+  body: string
+  description: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+/** PUT /api/admin/telemetry-shell-hints/:id may include these after a body change. */
+export interface TelemetryShellHintSaveResponse extends TelemetryShellHintRow {
+  telemetry_rows_updated?: number
+  telemetry_sync_errors?: string[]
 }
 
 export interface HttpK8sQosThresholds {

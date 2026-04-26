@@ -12,6 +12,23 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	// IncidentStatusAutoResolved is set when the system closes an incident after probe recovery.
+	IncidentStatusAutoResolved = "auto_resolved"
+	// IncidentStatusManuallyResolved is set when an admin closes an incident from the dashboard.
+	IncidentStatusManuallyResolved = "manually_resolved"
+)
+
+// IncidentStatusIsClosed reports whether the incident row is in a terminal closed state.
+func IncidentStatusIsClosed(status string) bool {
+	switch status {
+	case IncidentStatusAutoResolved, IncidentStatusManuallyResolved, "resolved":
+		return true
+	default:
+		return false
+	}
+}
+
 var qosPassRateFromMessage = regexp.MustCompile(`Pass rate:\s*([0-9]+(?:\.[0-9]+)?)%`)
 
 // ParseQoSPassRateFromUpdateMessage extracts pass rate from engine-style incident update text.
@@ -254,12 +271,12 @@ func (s *Store) UpdateIncidentDegradationAndSource(ctx context.Context, id uuid.
 	return nil
 }
 
-// UpdateIncidentStatus sets status. When status is resolved, pass resolvedBy as "system" or "admin"; otherwise nil.
+// UpdateIncidentStatus sets status. When status is a closed state, pass resolvedBy as "system" or "admin"; otherwise nil.
 func (s *Store) UpdateIncidentStatus(ctx context.Context, id uuid.UUID, status string, resolvedBy *string) error {
 	now := time.Now()
 	var resolvedAt *time.Time
 	var rb *string
-	if status == "resolved" {
+	if IncidentStatusIsClosed(status) {
 		t := now
 		resolvedAt = &t
 		rb = resolvedBy

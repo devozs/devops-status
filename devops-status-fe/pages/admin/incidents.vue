@@ -71,7 +71,7 @@
                   <span v-else class="table-cell-muted">—</span>
                 </td>
                 <td>
-                  <span class="status-badge" :class="'status--' + inc.status">{{ inc.status }}</span>
+                  <span class="status-badge" :class="'status--' + inc.status">{{ incidentStatusDisplay(inc) }}</span>
                 </td>
                 <td>
                   <span v-if="inc.resolution === 'open'" class="table-cell-muted">—</span>
@@ -115,7 +115,7 @@
               <div class="timeline-meta">
                 <span class="timeline-author">{{ u.author }}</span>
                 <span class="table-cell-muted">{{ formatDate(u.created_at) }}</span>
-                <span class="status-badge status-badge--sm" :class="'status--' + u.status">{{ u.status }}</span>
+                <span class="status-badge status-badge--sm" :class="'status--' + u.status">{{ incidentUpdateStatusDisplay(u.status) }}</span>
               </div>
               <p class="timeline-msg">{{ u.message }}</p>
             </li>
@@ -127,11 +127,11 @@
       </div>
     </div>
 
-    <div v-if="editing" class="modal-overlay" @click.self="editing = null">
+    <div v-if="editing" class="modal-overlay" @click.self="requestCloseIncidentEdit">
       <div class="modal-card">
         <div class="modal-card__header">
           <h2 class="modal-title">Update Incident</h2>
-          <button type="button" class="modal-card__close" aria-label="Close" @click="editing = null">
+          <button type="button" class="modal-card__close" aria-label="Close" @click="requestCloseIncidentEdit">
             <X :size="20" :stroke-width="2" />
           </button>
         </div>
@@ -151,12 +151,21 @@
             <textarea v-model="updateForm.message" class="form-input form-input--multiline" rows="3" />
           </div>
           <div class="modal-actions">
-            <button type="button" class="btn btn-modal-cancel" @click="editing = null">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="requestCloseIncidentEdit">Cancel</button>
             <button type="submit" class="btn btn-primary btn-pill">Submit</button>
           </div>
         </form>
       </div>
     </div>
+
+    <AdminUnsavedConfirmDialog
+      v-model="unsavedDialogOpen"
+      :title="unsavedDialogTitle"
+      :warning="unsavedDialogMessage"
+      :confirm-label="unsavedConfirmLabel"
+      :discard-confirm="confirmUnsavedDialog"
+      @cancel="cancelUnsavedDialog"
+    />
   </div>
 </template>
 
@@ -166,16 +175,27 @@ import type { AdminIncidentDetailResponse, AdminIncidentListItem, IncidentDegrad
 
 definePageMeta({ layout: 'admin' })
 const { apiFetch } = useApi()
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
 
 const incidents = ref<AdminIncidentListItem[]>([])
 const editing = ref<AdminIncidentListItem | null>(null)
 const updateForm = ref({ status: '', message: '' })
+const incidentUpdateBaseline = ref('')
 
 const incidentStatusSelectOptions = [
   { value: 'investigating', label: 'Investigating' },
   { value: 'identified', label: 'Identified' },
   { value: 'monitoring', label: 'Monitoring' },
-  { value: 'resolved', label: 'Resolved' },
+  { value: 'manually_resolved', label: 'Manually resolved' },
+  { value: 'auto_resolved', label: 'Recovered (automatic)' },
 ] as const
 
 const detail = ref<{ incident: AdminIncidentListItem; updates: IncidentUpdate[] } | null>(null)
@@ -238,20 +258,52 @@ function resolutionLabel(r: string) {
   return '—'
 }
 
+function incidentStatusDisplay(inc: AdminIncidentListItem) {
+  if (inc.status === 'auto_resolved') return 'Recovered'
+  if (inc.status === 'manually_resolved') return 'Manually resolved'
+  return inc.status
+}
+
+function incidentUpdateStatusDisplay(status: string) {
+  if (status === 'auto_resolved') return 'auto resolved'
+  if (status === 'manually_resolved') return 'manually resolved'
+  return status
+}
+
 async function openDetail(inc: AdminIncidentListItem) {
   const data = await apiFetch<AdminIncidentDetailResponse>(`/api/admin/incidents/${inc.id}`)
   detail.value = { incident: data.incident, updates: data.updates }
 }
 
+function captureIncidentUpdateSnapshot(): string {
+  return JSON.stringify({
+    status: updateForm.value.status,
+    message: updateForm.value.message,
+  })
+}
+
 function openUpdate(inc: AdminIncidentListItem) {
   editing.value = inc
   updateForm.value = { status: inc.status, message: '' }
+  incidentUpdateBaseline.value = captureIncidentUpdateSnapshot()
+}
+
+function performCloseIncidentEdit() {
+  editing.value = null
+  updateForm.value = { status: '', message: '' }
+}
+
+function requestCloseIncidentEdit() {
+  requestModalClose(performCloseIncidentEdit, {
+    isDirty: () => captureIncidentUpdateSnapshot() !== incidentUpdateBaseline.value,
+    message: 'You have unsaved changes to this incident update. Discard them?',
+  })
 }
 
 async function submitUpdate() {
   if (!editing.value) return
   await apiFetch(`/api/admin/incidents/${editing.value.id}`, { method: 'PUT', body: JSON.stringify(updateForm.value) })
-  editing.value = null
+  performCloseIncidentEdit()
   await load()
 }
 
@@ -385,7 +437,9 @@ onMounted(load)
   color: #3730a3;
 }
 
-.status--resolved {
+.status--resolved,
+.status--auto_resolved,
+.status--manually_resolved {
   background: #dcfce7;
   color: #166534;
 }

@@ -56,22 +56,33 @@ interface StatusSummaryPayload {
   environments: StatusSummaryItem[]
 }
 
-const { data: statusData } = await useAsyncData('status-summary', () =>
-  apiFetch<StatusSummaryPayload>('/api/public/status/summary'),
-  {
-    default: () => ({
-      status: 'operational',
-      message: 'All Systems Operational',
-      services: [],
-      environments: [],
-    }),
-  },
-)
+// Home data must load in the browser after mount. Reasons:
+// 1) SSR to the public API from the pod is unreliable without NUXT_API_BASE_INTERNAL.
+// 2) useAsyncData({ server: false }) still embeds default empty values in the Nuxt payload on SSR;
+//    on hydration Nuxt treats that as "already fetched" and skips running the handler — so a hard
+//    refresh shows no summary/incidents XHR, while client-side navigation runs the fetch.
+const defaultSummary = (): StatusSummaryPayload => ({
+  status: 'operational',
+  message: 'All Systems Operational',
+  services: [],
+  environments: [],
+})
 
-const { data: incidents } = await useAsyncData('recent-incidents', () =>
-  apiFetch<IncidentDisplayItem[]>('/api/public/incidents?limit=5'),
-  { default: () => [] },
-)
+const statusData = ref<StatusSummaryPayload>(defaultSummary())
+const incidents = ref<IncidentDisplayItem[]>([])
+
+onMounted(async () => {
+  try {
+    const [summary, inc] = await Promise.all([
+      apiFetch<StatusSummaryPayload>('/api/public/status/summary'),
+      apiFetch<IncidentDisplayItem[]>('/api/public/incidents?limit=5'),
+    ])
+    statusData.value = summary
+    incidents.value = inc
+  } catch {
+    // Leave defaults; user still sees the banner.
+  }
+})
 </script>
 
 <style scoped>

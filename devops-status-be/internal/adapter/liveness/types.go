@@ -8,4 +8,5 @@ const (
 	CheckElasticsearch  = "elasticsearch"
 	CheckJenkins        = "jenkins"
 	CheckArtifactory    = "artifactory"
+	CheckRancher        = "rancher"
 )

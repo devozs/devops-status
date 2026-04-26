@@ -17,7 +17,7 @@
         <span v-if="incident.target_name" class="past-incident__target">{{ targetKindLabel(incident.target_type) }} · {{ incident.target_name }}</span>
         <span class="past-incident__date">{{ formatDate(incident.started_at) }}</span>
       </span>
-      <span class="past-incident__status" :class="'status-pill--' + incident.status">{{ incident.status }}</span>
+      <span class="past-incident__status" :class="pastIncidentStatusPillClass(incident)">{{ pastIncidentStatusPillLabel(incident) }}</span>
     </button>
 
     <div
@@ -58,7 +58,7 @@
           <div class="past-incident__tl-meta">
             <span class="past-incident__tl-author">{{ u.author }}</span>
             <span class="past-incident__muted">{{ formatDateTime(u.created_at) }}</span>
-            <span class="past-incident__tl-status">{{ u.status }}</span>
+            <span class="past-incident__tl-status">{{ pastIncidentUpdateStatusLabel(u.status) }}</span>
           </div>
           <p class="past-incident__tl-msg">{{ u.message }}</p>
         </li>
@@ -157,6 +157,28 @@ function resolutionLabel(r: string) {
   if (r === 'manual') return 'Manual (admin)'
   if (r === 'unknown') return 'Unknown'
   return '—'
+}
+
+function isClosedIncidentStatus(status: string) {
+  return status === 'auto_resolved' || status === 'manually_resolved' || status === 'resolved'
+}
+
+function pastIncidentStatusPillLabel(inc: IncidentDisplayItem) {
+  if (!isClosedIncidentStatus(inc.status)) return inc.status
+  if (inc.resolution === 'manual') return 'Manually resolved'
+  if (inc.resolution === 'automatic') return 'Recovered'
+  return inc.status.replaceAll('_', ' ')
+}
+
+function pastIncidentStatusPillClass(inc: IncidentDisplayItem) {
+  if (isClosedIncidentStatus(inc.status)) return 'status-pill--resolved'
+  return 'status-pill--' + inc.status
+}
+
+function pastIncidentUpdateStatusLabel(status: string) {
+  if (status === 'auto_resolved') return 'auto resolved'
+  if (status === 'manually_resolved') return 'manually resolved'
+  return status
 }
 
 function formatDate(iso: string) {

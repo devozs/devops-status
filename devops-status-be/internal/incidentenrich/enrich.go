@@ -16,6 +16,12 @@ func Resolution(inc model.Incident) string {
 	if inc.ResolvedAt == nil {
 		return "open"
 	}
+	switch inc.Status {
+	case store.IncidentStatusAutoResolved:
+		return "automatic"
+	case store.IncidentStatusManuallyResolved:
+		return "manual"
+	}
 	if inc.ResolvedBy != nil {
 		switch *inc.ResolvedBy {
 		case "system":

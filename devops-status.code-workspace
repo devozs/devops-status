@@ -1,14 +1,13 @@
 {
 	"folders": [
 		{
-			"path": "../../habana/habana-k8s-infra-services"
+			"path": ".."
 		},
 		{
-			"path": "."
-		},
-		{
-			"path": "../../habana/workflows"
+			"path": "../../workflows"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"claudeCode.disableLoginPrompt": true
+	}
 }

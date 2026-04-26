@@ -11,6 +11,7 @@ import {
   Download,
   LogOut,
   ArrowLeft,
+  Library,
 } from 'lucide-vue-next'
 
 const { apiFetch } = useApi()
@@ -26,16 +27,20 @@ const routeTitles: Record<string, string> = {
   '/admin/k8s-clusters': 'Kubernetes clusters',
   '/admin/incidents': 'Incidents',
   '/admin/export': 'Export',
+  '/admin/telemetry-shell-hints': 'Shell hints',
 }
 
 const breadcrumbLabel = computed(() => {
   const p = route.path.replace(/\/$/, '') || '/'
+  if (p === '/admin/telemetry/new') return 'Telemetry — New'
+  if (p.startsWith('/admin/telemetry/') && p !== '/admin/telemetry/new') return 'Telemetry — Edit'
   return routeTitles[p] ?? 'Admin'
 })
 
 function pathActive(target: string) {
   const p = route.path.replace(/\/$/, '') || '/'
   const t = target.replace(/\/$/, '') || '/'
+  if (t === '/admin/telemetry' && p.startsWith('/admin/telemetry')) return true
   return p === t
 }
 
@@ -77,6 +82,7 @@ watch(
 
 const navOperations = [
   { to: '/admin/incidents', label: 'Incidents', icon: AlertTriangle },
+  { to: '/admin/telemetry-shell-hints', label: 'Shell hints', icon: Library },
   { to: '/admin/export', label: 'Export', icon: Download },
 ]
 </script>

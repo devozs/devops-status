@@ -70,6 +70,18 @@ type Telemetry struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// TelemetryShellHint is admin-defined reusable text for telemetry shell-related fields.
+type TelemetryShellHint struct {
+	ID          uuid.UUID `json:"id"`
+	Kind        string    `json:"kind"`
+	Title       string    `json:"title"`
+	Body        string    `json:"body"`
+	Description string    `json:"description"`
+	SortOrder   int       `json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Incident struct {
 	ID                uuid.UUID       `json:"id"`
 	TargetType        string          `json:"target_type"`

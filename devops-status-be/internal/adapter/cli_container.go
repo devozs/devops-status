@@ -9,12 +9,14 @@ import (
 const (
 	CLIRunnerProfileAlpine   = "alpine"
 	CLIRunnerProfileUbuntu24 = "ubuntu_24"
+	CLIRunnerProfileToolkit  = "toolkit"
 )
 
 // CLIRunnerImages maps preset + legacy default to concrete image references (from server env).
 type CLIRunnerImages struct {
 	Alpine   string
 	Ubuntu24 string
+	Toolkit  string
 	Legacy   string // CLI_RUNNER_IMAGE fallback when runner is empty
 }
 
@@ -48,13 +50,18 @@ func ResolveCLIContainerImage(cfg CLIConfig, imgs CLIRunnerImages) (string, erro
 			return "", fmt.Errorf("ubuntu_24 runner image not configured")
 		}
 		return imgs.Ubuntu24, nil
+	case CLIRunnerProfileToolkit:
+		if imgs.Toolkit == "" {
+			return "", fmt.Errorf("toolkit runner image not configured")
+		}
+		return imgs.Toolkit, nil
 	default:
-		return "", fmt.Errorf("unsupported runner profile %q (use alpine or ubuntu_24)", p)
+		return "", fmt.Errorf("unsupported runner profile %q (use alpine, ubuntu_24, or toolkit)", p)
 	}
 }
 
 func isAllowedRunnerImage(ref string, imgs CLIRunnerImages) bool {
-	for _, c := range []string{imgs.Alpine, imgs.Ubuntu24, imgs.Legacy} {
+	for _, c := range []string{imgs.Alpine, imgs.Ubuntu24, imgs.Toolkit, imgs.Legacy} {
 		if c != "" && ref == c {
 			return true
 		}

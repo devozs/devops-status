@@ -11,7 +11,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/devops-status/be/internal/adapter"
 	"github.com/devops-status/be/internal/auth"
+	"github.com/devops-status/be/internal/config"
 	"github.com/devops-status/be/internal/handler"
 	"github.com/devops-status/be/internal/model"
 	"github.com/devops-status/be/internal/secrets"
@@ -21,12 +23,18 @@ import (
 const maxServiceProviderImageURLLen = 2000
 
 type ServiceProvidersHandler struct {
-	store  *store.Store
-	secret *secrets.Store
+	store        *store.Store
+	secret       *secrets.Store
+	hlctlEnabled bool
+	cliLogMax    int
 }
 
-func NewServiceProvidersHandler(s *store.Store, sec *secrets.Store) *ServiceProvidersHandler {
-	return &ServiceProvidersHandler{store: s, secret: sec}
+func NewServiceProvidersHandler(s *store.Store, sec *secrets.Store, hlctlEnabled bool, cfg *config.Config) *ServiceProvidersHandler {
+	logMax := cfg.CLILogMaxBytes
+	if logMax <= 0 {
+		logMax = adapter.DefaultCLILogMaxBytes
+	}
+	return &ServiceProvidersHandler{store: s, secret: sec, hlctlEnabled: hlctlEnabled, cliLogMax: logMax}
 }
 
 type serviceProviderResponse struct {
@@ -82,6 +90,12 @@ func (h *ServiceProvidersHandler) hasStoredCredentialsForProvider(ctx context.Co
 	case "artifactory":
 		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyArtifactoryCreds)
 		return ok
+	case "rancher":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyRancherCreds)
+		return ok
+	case "hlctl":
+		ok, _ := h.secret.HasServiceProviderSecretKey(ctx, p.ID, secrets.KeyHlctlCreds)
+		return ok
 	default:
 		return false
 	}
@@ -122,6 +136,7 @@ type verifyServiceProviderBody struct {
 	DNSHostname       string            `json:"dns_hostname"`
 	DNSRecordType     string            `json:"dns_record_type"`
 	DNSNameserver     string            `json:"dns_nameserver"`
+	InsecureSkipTLS   bool              `json:"insecure_skip_tls"` // prometheus: private CA / self-signed (no omitempty — must decode explicit false/true)
 	Credentials       map[string]string `json:"credentials"`
 	ServiceProviderID string            `json:"service_provider_id,omitempty"`
 }
@@ -136,6 +151,17 @@ func mergePrometheusCreds(body map[string]string, stored secrets.PrometheusCrede
 	}
 	if v := strings.TrimSpace(body["password"]); v != "" {
 		out.Password = v
+	}
+	if v := strings.TrimSpace(body["bearer_token"]); v != "" {
+		out.BearerToken = v
+	}
+	return out
+}
+
+func mergeRancherCreds(body map[string]string, stored secrets.RancherCredentials) secrets.RancherCredentials {
+	out := stored
+	if body == nil {
+		return out
 	}
 	if v := strings.TrimSpace(body["bearer_token"]); v != "" {
 		out.BearerToken = v
@@ -215,6 +241,21 @@ func (h *ServiceProvidersHandler) persistServiceProviderPrometheusCreds(ctx cont
 	return h.secret.WriteServiceProviderPrometheusCredentials(ctx, providerID, merged)
 }
 
+func (h *ServiceProvidersHandler) persistServiceProviderRancherCreds(ctx context.Context, providerID uuid.UUID, authMethod string, merged secrets.RancherCredentials) error {
+	if h.secret == nil {
+		return errors.New("secrets store not configured")
+	}
+	am := strings.ToLower(strings.TrimSpace(authMethod))
+	if am == "none" {
+		_ = h.secret.Delete(ctx, secrets.OwnerServiceProvider, providerID, secrets.KeyRancherCreds)
+		return nil
+	}
+	if merged.BearerToken == "" {
+		return errors.New("rancher bearer auth requires an API token")
+	}
+	return h.secret.WriteServiceProviderRancherCredentials(ctx, providerID, merged)
+}
+
 func (h *ServiceProvidersHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body serviceProviderRequestBody
 	if err := handler.DecodeJSON(r, &body); err != nil {
@@ -234,6 +275,10 @@ func (h *ServiceProvidersHandler) Create(w http.ResponseWriter, r *http.Request)
 	}
 	if err := validateServiceProviderInput(input.ProviderType, input.Host, input.Port, input.ConfigJSON); err != nil {
 		handler.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.ProviderType == "hlctl" && !h.hlctlEnabled {
+		handler.WriteError(w, http.StatusBadRequest, "HLCTL service provider requires kubectl and hlctl in the management image")
 		return
 	}
 	if providerTypeUsesSecretStore(input.ProviderType) && h.secret == nil {
@@ -294,6 +339,10 @@ func (h *ServiceProvidersHandler) Update(w http.ResponseWriter, r *http.Request)
 	}
 	if err := validateServiceProviderInput(input.ProviderType, input.Host, input.Port, input.ConfigJSON); err != nil {
 		handler.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.ProviderType == "hlctl" && !h.hlctlEnabled {
+		handler.WriteError(w, http.StatusBadRequest, "HLCTL service provider requires kubectl and hlctl in the management image")
 		return
 	}
 	if providerTypeUsesSecretStore(input.ProviderType) && h.secret == nil {

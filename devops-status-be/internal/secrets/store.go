@@ -39,6 +39,11 @@ type HTTPBasicCredentials struct {
 	Password string `json:"password,omitempty"`
 }
 
+// RancherCredentials stores a Rancher API token for service provider probes.
+type RancherCredentials struct {
+	BearerToken string `json:"bearer_token,omitempty"`
+}
+
 func (s *Store) Write(ctx context.Context, ownerType string, ownerID uuid.UUID, key string, plaintext []byte) error {
 	nonce, ct, err := encrypt(plaintext, s.key)
 	if err != nil {
@@ -90,6 +95,8 @@ const (
 	KeyElasticsearchCreds  = "elasticsearch_credentials"
 	KeyJenkinsCreds        = "jenkins_credentials"
 	KeyArtifactoryCreds    = "artifactory_credentials"
+	KeyRancherCreds        = "rancher_credentials"
+	KeyHlctlCreds          = "hlctl_credentials"
 )
 
 // WritePrometheusCredentials stores username/password or bearer as JSON.
@@ -188,6 +195,31 @@ func (s *Store) WriteServiceProviderHTTPBasic(ctx context.Context, providerID uu
 func (s *Store) ReadServiceProviderHTTPBasic(ctx context.Context, providerID uuid.UUID, key string) (HTTPBasicCredentials, error) {
 	var out HTTPBasicCredentials
 	b, err := s.Read(ctx, OwnerServiceProvider, providerID, key)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, nil
+		}
+		return out, err
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// WriteServiceProviderRancherCredentials stores a Rancher API token for a service provider.
+func (s *Store) WriteServiceProviderRancherCredentials(ctx context.Context, providerID uuid.UUID, c RancherCredentials) error {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return s.Write(ctx, OwnerServiceProvider, providerID, KeyRancherCreds, b)
+}
+
+// ReadServiceProviderRancherCredentials loads the token for verify/save merge.
+func (s *Store) ReadServiceProviderRancherCredentials(ctx context.Context, providerID uuid.UUID) (RancherCredentials, error) {
+	var out RancherCredentials
+	b, err := s.Read(ctx, OwnerServiceProvider, providerID, KeyRancherCreds)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return out, nil

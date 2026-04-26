@@ -13,8 +13,8 @@ func (e *StatusEvaluator) evaluateQoSWithThresholds(samples []store.SampleRecord
 		return "", 0
 	}
 
-	// CLI / Kubernetes shell metric QoS: same worst-band aggregation as Prometheus on RawValue (number) or cli_text_value (text).
-	if (ad == "cli" || ad == "kubernetes") && len(qosBytes) > 0 {
+	// CLI / HLCTL / Kubernetes shell metric QoS: same worst-band aggregation as Prometheus on RawValue (number) or cli_text_value (text).
+	if (ad == "cli" || ad == "hlctl" || ad == "kubernetes") && len(qosBytes) > 0 {
 		var cliQ struct {
 			ValueKind       string  `json:"value_kind"`
 			GreenOperator   string  `json:"green_operator"`

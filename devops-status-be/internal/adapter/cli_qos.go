@@ -39,10 +39,7 @@ func RunCLIPQoSProbe(ctx context.Context, a Adapter, mergedCfg json.RawMessage, 
 		if st.cmd == "" {
 			continue
 		}
-		sub := base
-		sub.Command = st.cmd
-		sub.Args = st.args
-		b, mErr := json.Marshal(sub)
+		b, mErr := patchCLICommandJSON(mergedCfg, st.cmd, st.args)
 		att := map[string]any{
 			"qos_level": st.level,
 			"command":   st.cmd,
@@ -52,6 +49,9 @@ func RunCLIPQoSProbe(ctx context.Context, a Adapter, mergedCfg json.RawMessage, 
 			att["marshal_error"] = mErr.Error()
 			attempts = append(attempts, att)
 			continue
+		}
+		if sink := ProbeLogSinkFromContext(ctx); sink != nil {
+			sink.WriteHost(map[string]any{"qos_attempt": st.level})
 		}
 		r, pErr := a.Probe(ctx, b)
 		if pErr != nil {
@@ -111,6 +111,20 @@ func RunCLIPQoSProbe(ctx context.Context, a Adapter, mergedCfg json.RawMessage, 
 			"cli_qos_attempts": attempts,
 		},
 	}, nil
+}
+
+// patchCLICommandJSON updates command/args on the raw config while preserving extra keys (e.g. HLCTL _hlctl_* credentials).
+func patchCLICommandJSON(raw json.RawMessage, cmd string, args []string) ([]byte, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	m["command"] = cmd
+	if args == nil {
+		args = []string{}
+	}
+	m["args"] = args
+	return json.Marshal(m)
 }
 
 func qosFailureSummary(attempts []map[string]any) string {

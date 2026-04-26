@@ -455,6 +455,10 @@ button.btn {
   max-width: 520px;
 }
 
+.modal-card--confirm-warn {
+  max-width: 520px;
+}
+
 .modal-title {
   font-size: 1.375rem;
   font-weight: 700;

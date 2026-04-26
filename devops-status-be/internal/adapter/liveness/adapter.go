@@ -39,6 +39,8 @@ func (a *Adapter) Probe(ctx context.Context, configRaw json.RawMessage) (*adapte
 		return probeJenkins(ctx, w.Config)
 	case CheckArtifactory:
 		return probeArtifactory(ctx, w.Config)
+	case CheckRancher:
+		return probeRancher(ctx, w.Config)
 	default:
 		return nil, fmt.Errorf("unsupported liveness_check: %s", w.LivenessCheck)
 	}

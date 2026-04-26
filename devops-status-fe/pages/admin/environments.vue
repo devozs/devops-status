@@ -97,6 +97,15 @@
       @cancel="onDeleteDialogCancel"
     />
 
+    <AdminUnsavedConfirmDialog
+      v-model="unsavedDialogOpen"
+      :title="unsavedDialogTitle"
+      :warning="unsavedDialogMessage"
+      :confirm-label="unsavedConfirmLabel"
+      :discard-confirm="confirmUnsavedDialog"
+      @cancel="cancelUnsavedDialog"
+    />
+
     <div v-if="historyEnv" class="modal-overlay" @click.self="closeHistory">
       <div class="modal-card modal-card--wide history-panel" role="dialog" aria-labelledby="history-title">
         <h2 id="history-title" class="modal-title">Probe history — {{ historyEnv.name }}</h2>
@@ -142,7 +151,7 @@
                     <td class="history-trace-cell">
                       <span class="history-trace">{{ traceSnippet(s.source_trace) }}</span>
                       <button
-                        v-if="historyTelemetryAdapter() === 'cli' && sampleHasCliLogs(s)"
+                        v-if="historyTelemetryCliLike() && sampleHasCliLogs(s)"
                         type="button"
                         class="btn btn-sm history-cli-toggle"
                         @click="toggleHistoryCliExpand(s.id)"
@@ -151,7 +160,7 @@
                       </button>
                     </td>
                   </tr>
-                  <tr v-if="historyTelemetryAdapter() === 'cli' && historyCliExpanded[s.id] && sampleHasCliLogs(s)" class="history-cli-detail-row">
+                  <tr v-if="historyTelemetryCliLike() && historyCliExpanded[s.id] && sampleHasCliLogs(s)" class="history-cli-detail-row">
                     <td colspan="4">
                       <pre class="history-cli-pre">{{ formatCliSampleDetail(s) }}</pre>
                     </td>
@@ -170,11 +179,11 @@
       </div>
     </div>
 
-    <div v-if="showCreate || editing" class="modal-overlay" @click.self="closeModal">
+    <div v-if="showCreate || editing" class="modal-overlay" @click.self="requestCloseModal">
       <div class="modal-card modal-card--wide">
         <div class="modal-card__header">
           <h2 class="modal-title">{{ editing ? 'Edit environment' : 'Create environment' }}</h2>
-          <button type="button" class="modal-card__close" aria-label="Close" @click="closeModal">
+          <button type="button" class="modal-card__close" aria-label="Close" @click="requestCloseModal">
             <X :size="20" :stroke-width="2" />
           </button>
         </div>
@@ -255,48 +264,69 @@
 
           <template v-if="editing">
             <h3 class="modal-section-title">Kubernetes telemetry</h3>
-            <p class="form-hint">Link Kubernetes telemetry definitions to this environment. Scheduling and status thresholds are per link.</p>
-            <TelemetryLinkSchedulingHelp />
-            <table class="mini-table">
-              <thead>
-                <tr>
-                  <th>Telemetry</th>
-                  <th title="Seconds between scheduled probe runs for this link">Interval</th>
-                  <th title="Number of recent operational results considered for up/down">Window</th>
-                  <th title="Consecutive failures required before marking down">Fail→down</th>
-                  <th title="Consecutive successes required before marking recovered">Success→up</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="link in envLinks" :key="link.id">
-                  <td>{{ telemetryName(link.telemetry_id) }}</td>
-                  <td><input v-model.number="linkEdit[link.id].sample_interval_sec" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].window_size" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].consecutive_failures_to_down" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td><input v-model.number="linkEdit[link.id].consecutive_success_to_recover" type="number" class="form-input form-input--xs" min="1" /></td>
-                  <td class="mini-table__actions">
-                    <button type="button" class="btn btn-xs" @click="patchEnvLink(link.id)">Save</button>
-                    <button type="button" class="btn btn-xs btn-danger" @click="requestRemoveEnvLink(link.id)">Remove</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div class="add-link-row">
-              <AdminSelect
-                v-model="newLink.telemetry_id"
-                aria-label="Add telemetry"
-                placeholder="Add telemetry…"
-                :options="envTelemetrySelectOptions"
-              />
-              <button type="button" class="btn btn-sm btn-primary" :disabled="!newLink.telemetry_id" @click="addEnvLink">Add</button>
-            </div>
+            <p v-if="!primaryClusterSelected" class="form-hint">
+              Select a primary Kubernetes cluster above before you can add or edit telemetry links.
+            </p>
+            <template v-else>
+              <p class="form-hint">
+                Link probes for this cluster only. Interval, window, and thresholds are per link — use Save on each row to persist changes.
+              </p>
+              <TelemetryLinkSchedulingHelp />
+              <table class="mini-table">
+                <thead>
+                  <tr>
+                    <th>Telemetry</th>
+                    <th title="Minutes between scheduled probe runs for this link">Interval (min)</th>
+                    <th title="Number of recent operational results considered for up/down">Window</th>
+                    <th title="Consecutive failures required before marking down">Fail→down</th>
+                    <th title="Consecutive successes required before marking recovered">Success→up</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="link in envLinks" :key="link.id">
+                    <td>{{ envTelemetryRowName(link.telemetry_id) }}</td>
+                    <td><input v-model.number="linkEdit[link.id].sample_interval_min" type="number" class="form-input form-input--xs" min="0" step="any" /></td>
+                    <td><input v-model.number="linkEdit[link.id].window_size" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td><input v-model.number="linkEdit[link.id].consecutive_failures_to_down" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td><input v-model.number="linkEdit[link.id].consecutive_success_to_recover" type="number" class="form-input form-input--xs" min="1" /></td>
+                    <td class="mini-table__actions">
+                      <button
+                        type="button"
+                        class="btn btn-xs btn-primary"
+                        :disabled="!isEnvLinkDirty(link.id)"
+                        @click="patchEnvLink(link.id)"
+                      >
+                        Save
+                      </button>
+                      <button type="button" class="btn btn-xs btn-danger" @click="requestRemoveEnvLink(link.id)">Remove</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="add-link-row">
+                <AdminSelect
+                  v-model="newLink.telemetry_id"
+                  aria-label="Add telemetry"
+                  placeholder="Add telemetry…"
+                  :options="envTelemetrySelectOptions"
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  :disabled="!newLink.telemetry_id"
+                  @click="addEnvLink"
+                >
+                  Add
+                </button>
+              </div>
+            </template>
           </template>
 
           <p v-if="formError" class="field-error">{{ formError }}</p>
 
           <div class="modal-actions">
-            <button type="button" class="btn btn-modal-cancel" @click="closeModal">Cancel</button>
+            <button type="button" class="btn btn-modal-cancel" @click="requestCloseModal">Cancel</button>
             <button type="submit" class="btn btn-primary" :disabled="!canSaveGeneral || saving">
               {{ saving ? 'Saving…' : 'Save' }}
             </button>
@@ -311,11 +341,22 @@
 <script setup lang="ts">
 import { Boxes, Plus, X } from 'lucide-vue-next'
 import type { ResourceTopology } from '~/types/resource-topology'
+import { telemetryClusterId } from '~/utils/telemetryLinkAffinity'
+import { intervalMinFromSec, intervalSecFromMin } from '~/utils/telemetryLinkInterval'
 
 definePageMeta({ layout: 'admin' })
 
 const { apiFetch } = useApi()
 const { fetchAdmin: fetchTopologyAdmin } = useResourceTopology()
+const {
+  requestClose: requestModalClose,
+  unsavedDialogOpen,
+  unsavedDialogMessage,
+  unsavedDialogTitle,
+  unsavedConfirmLabel,
+  confirmUnsavedDialog,
+  cancelUnsavedDialog,
+} = useModalUnsavedGuard()
 
 type ClusterRow = {
   id: string
@@ -412,7 +453,7 @@ const allTelemetry = ref<
 const envLinks = ref<EnvLink[]>([])
 const linkEdit = ref<Record<string, {
   telemetry_id: string
-  sample_interval_sec: number
+  sample_interval_min: number
   window_size: number
   consecutive_failures_to_down: number
   consecutive_success_to_recover: number
@@ -622,9 +663,46 @@ const envK8sClusterSelectOptions = computed(() => [
   { value: '', label: 'None' },
   ...clustersForEnv.value.map((c) => ({ value: c.id, label: `${c.name} (${c.status})` })),
 ])
-const envTelemetrySelectOptions = computed(() =>
-  k8sTelemetry.value.map((t) => ({ value: t.id, label: t.name })),
-)
+
+const primaryClusterSelected = computed(() => !!(form.value.k8s_cluster_id || '').trim())
+
+const linkedTelemetryIds = computed(() => new Set(envLinks.value.map((l) => l.telemetry_id)))
+
+const envTelemetrySelectOptions = computed(() => {
+  const cid = (form.value.k8s_cluster_id || '').trim()
+  if (!cid) return []
+  const linked = linkedTelemetryIds.value
+  return k8sTelemetry.value
+    .filter((t) => telemetryClusterId(t) === cid && !linked.has(t.id))
+    .map((t) => ({ value: t.id, label: t.name }))
+})
+
+function envTelemetryRowName(id: string) {
+  const t = allTelemetry.value.find((d) => d.id === id)
+  return t?.name ?? id
+}
+
+function isEnvLinkDirty(linkId: string): boolean {
+  const row = envLinks.value.find((l) => l.id === linkId)
+  const ed = linkEdit.value[linkId]
+  if (!row || !ed) return false
+  return (
+    ed.telemetry_id !== row.telemetry_id
+    || intervalSecFromMin(ed.sample_interval_min) !== row.sample_interval_sec
+    || ed.window_size !== row.window_size
+    || ed.consecutive_failures_to_down !== row.consecutive_failures_to_down
+    || ed.consecutive_success_to_recover !== row.consecutive_success_to_recover
+  )
+}
+
+const hasAnyEnvLinkDirty = computed(() => envLinks.value.some((l) => isEnvLinkDirty(l.id)))
+
+function requestCloseModal() {
+  requestModalClose(performCloseModal, {
+    isDirty: () => hasAnyEnvLinkDirty.value,
+    message: 'You have unsaved changes to telemetry link scheduling. Discard them?',
+  })
+}
 
 function telemetryName(id: string) {
   const t = allTelemetry.value.find((d) => d.id === id)
@@ -651,6 +729,11 @@ function historyTelemetryAdapter() {
   const tid = historyTabTelemetryId.value
   const t = allTelemetry.value.find((d) => d.id === tid)
   return t?.adapter || ''
+}
+
+function historyTelemetryCliLike() {
+  const a = historyTelemetryAdapter()
+  return a === 'cli' || a === 'hlctl'
 }
 
 function sampleHasCliLogs(s: TelemetrySampleRow) {
@@ -795,7 +878,7 @@ function syncLinkEdit() {
   for (const l of envLinks.value) {
     m[l.id] = {
       telemetry_id: l.telemetry_id,
-      sample_interval_sec: l.sample_interval_sec,
+      sample_interval_min: intervalMinFromSec(l.sample_interval_sec),
       window_size: l.window_size,
       consecutive_failures_to_down: l.consecutive_failures_to_down,
       consecutive_success_to_recover: l.consecutive_success_to_recover,
@@ -848,7 +931,7 @@ function startCreate() {
   newLink.value = { telemetry_id: '' }
 }
 
-function closeModal() {
+function performCloseModal() {
   showCreate.value = false
   editing.value = null
   envLinks.value = []
@@ -897,7 +980,7 @@ async function saveEnv() {
       })
       await loadEnvironments()
       await loadClusters()
-      closeModal()
+      performCloseModal()
     } else {
       const created = (await apiFetch('/api/admin/environments', {
         method: 'POST',
@@ -938,7 +1021,22 @@ onUnmounted(() => {
 })
 
 async function addEnvLink() {
+  formError.value = ''
   if (!editing.value || !newLink.value.telemetry_id) return
+  const cid = (form.value.k8s_cluster_id || '').trim()
+  if (!cid) {
+    formError.value = 'Select a primary Kubernetes cluster before adding telemetry.'
+    return
+  }
+  if (linkedTelemetryIds.value.has(newLink.value.telemetry_id)) {
+    formError.value = 'This telemetry is already linked to this environment.'
+    return
+  }
+  const tel = allTelemetry.value.find((d) => d.id === newLink.value.telemetry_id)
+  if (!tel || telemetryClusterId(tel) !== cid) {
+    formError.value = 'Telemetry must target the same Kubernetes cluster as this environment.'
+    return
+  }
   await apiFetch(`/api/admin/environments/${editing.value.id}/telemetry-links`, {
     method: 'POST',
     body: JSON.stringify({
@@ -961,7 +1059,13 @@ async function patchEnvLink(linkId: string) {
   if (!inp) return
   await apiFetch(`/api/admin/environments/${editing.value.id}/telemetry-links/${linkId}`, {
     method: 'PATCH',
-    body: JSON.stringify(inp),
+    body: JSON.stringify({
+      telemetry_id: inp.telemetry_id,
+      sample_interval_sec: intervalSecFromMin(inp.sample_interval_min),
+      window_size: inp.window_size,
+      consecutive_failures_to_down: inp.consecutive_failures_to_down,
+      consecutive_success_to_recover: inp.consecutive_success_to_recover,
+    }),
   })
   const detail = await apiFetch<{ telemetry_links?: EnvLink[] }>(`/api/admin/environments/${editing.value.id}`)
   envLinks.value = detail.telemetry_links || []

@@ -13,13 +13,13 @@ func QoSLevelFromProbe(ad string, qosBytes []byte, result *ProbeResult, operatio
 	if len(qosBytes) == 0 || string(qosBytes) == "null" || string(qosBytes) == "{}" {
 		return ""
 	}
-	if ad == "cli" || ad == "kubernetes" {
+	if ad == "cli" || ad == "hlctl" || ad == "kubernetes" {
 		if result.Metadata != nil {
 			if lvl, _ := result.Metadata["qos_level"].(string); lvl != "" {
 				return strings.ToLower(lvl)
 			}
 		}
-		if ad == "cli" {
+		if ad == "cli" || ad == "hlctl" {
 			return ""
 		}
 	}

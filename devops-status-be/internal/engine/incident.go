@@ -66,7 +66,7 @@ func (m *IncidentManager) OnDown(ctx context.Context, targetType string, targetI
 	slog.Info("incident opened", "incident_id", inc.ID, "target_type", targetType, "target_id", targetID)
 }
 
-func (m *IncidentManager) OnDegraded(ctx context.Context, targetType string, targetID uuid.UUID, telemetryID *uuid.UUID, adapter string, passRate float64, qosLevel string) {
+func (m *IncidentManager) OnDegraded(ctx context.Context, targetType string, targetID uuid.UUID, telemetryID *uuid.UUID, adapter string, passRate float64, qosLevel string, sourceHint string) {
 	deg := qosDegradation(adapter, passRate, qosLevel)
 
 	existing, err := m.store.GetOpenIncident(ctx, targetType, targetID)
@@ -75,10 +75,14 @@ func (m *IncidentManager) OnDegraded(ctx context.Context, targetType string, tar
 		return
 	}
 
+	msg := fmt.Sprintf("Quality of service degraded. Pass rate: %.1f%%", passRate)
+	if sourceHint != "" {
+		msg += " Source: " + sourceHint + "."
+	}
+
 	if existing != nil {
 		_ = m.store.UpdateIncidentDegradationAndSource(ctx, existing.ID, telemetryID, deg)
-		_ = m.store.CreateIncidentUpdate(ctx, existing.ID, "identified",
-			fmt.Sprintf("Quality of service degraded. Pass rate: %.1f%%", passRate), "system")
+		_ = m.store.CreateIncidentUpdate(ctx, existing.ID, "identified", msg, "system")
 		_ = m.store.UpdateIncidentStatus(ctx, existing.ID, "identified", nil)
 		return
 	}
@@ -90,8 +94,7 @@ func (m *IncidentManager) OnDegraded(ctx context.Context, targetType string, tar
 		return
 	}
 
-	_ = m.store.CreateIncidentUpdate(ctx, inc.ID, "investigating",
-		fmt.Sprintf("Quality of service degraded. Pass rate: %.1f%%", passRate), "system")
+	_ = m.store.CreateIncidentUpdate(ctx, inc.ID, "investigating", msg, "system")
 
 	slog.Info("degraded incident opened", "incident_id", inc.ID, "target_type", targetType, "target_id", targetID)
 }
@@ -102,20 +105,20 @@ func (m *IncidentManager) OnRecovery(ctx context.Context, targetType string, tar
 		return
 	}
 
-	if existing == nil || existing.Status == "resolved" {
+	if existing == nil || store.IncidentStatusIsClosed(existing.Status) {
 		return
 	}
 
 	if existing.Status == "monitoring" {
 		rb := "system"
-		_ = m.store.UpdateIncidentStatus(ctx, existing.ID, "resolved", &rb)
-		_ = m.store.CreateIncidentUpdate(ctx, existing.ID, "resolved",
-			"This incident has been resolved.", "system")
+		_ = m.store.UpdateIncidentStatus(ctx, existing.ID, store.IncidentStatusAutoResolved, &rb)
+		_ = m.store.CreateIncidentUpdate(ctx, existing.ID, store.IncidentStatusAutoResolved,
+			"Sustained successful health checks; incident closed automatically.", "system")
 		slog.Info("incident resolved", "incident_id", existing.ID)
 		return
 	}
 
 	_ = m.store.UpdateIncidentStatus(ctx, existing.ID, "monitoring", nil)
 	_ = m.store.CreateIncidentUpdate(ctx, existing.ID, "monitoring",
-		"A fix has been implemented and we are monitoring the results.", "system")
+		"Health checks are passing again; monitoring to confirm stability.", "system")
 }

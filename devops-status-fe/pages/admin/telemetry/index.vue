@@ -2,7 +2,7 @@
   <div>
     <div class="page-header">
       <h1 class="page-title">Telemetry</h1>
-      <button type="button" class="btn btn-primary btn-pill" @click="openCreate">
+      <button type="button" class="btn btn-primary btn-pill" @click="goCreate">
         <Plus class="btn-leading-icon" :size="18" :stroke-width="2" />
         Add telemetry
       </button>
@@ -11,7 +11,7 @@
     <AdminCallout variant="info">
       <p>
         Telemetry definitions are reusable probes (HTTP, Prometheus, Kubernetes, CLI). Use <strong>Verify</strong> in the editor to test
-        connectivity and QoS before attaching them to services or environments.
+        connectivity and QoS before attaching them to services or environments. Shell-based probes stream execution logs in a terminal view and use the same cluster access as scheduled probes.
       </p>
     </AdminCallout>
 
@@ -49,8 +49,8 @@
                   </div>
                 </td>
                 <td>
-                  <button type="button" class="btn btn-sm" @click="openEdit(t)">Edit</button>
-                  <button type="button" class="btn btn-sm" @click="openDuplicate(t)">Duplicate</button>
+                  <button type="button" class="btn btn-sm" @click="goEdit(t)">Edit</button>
+                  <button type="button" class="btn btn-sm" @click="goDuplicate(t)">Duplicate</button>
                   <button type="button" class="btn btn-sm" @click="openTest(t)">Test</button>
                   <button type="button" class="btn btn-sm btn-danger" @click="requestDeleteRow(t)">Delete</button>
                 </td>
@@ -87,25 +87,17 @@
         :k8s-version="drawerK8sVersion"
         :busy="drawerBusy"
         @verify="runSavedTest"
+        @abort-verify="abortDrawerVerify"
       />
     </div>
-
-    <TelemetryFormModal
-      v-if="showModal"
-      :initial="editing"
-      :environments="environments"
-      :clusters="clusters"
-      :api-fetch="apiFetch"
-      @close="closeModal"
-      @saved="onSaved"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Activity, Plus } from 'lucide-vue-next'
-import type { AdapterType, TelemetryFormInitial, TelemetryK8sClusterRow, TelemetryRow } from '~/types/telemetry'
+import { postProbeTestStream, ProbeStreamAbortedError } from '~/composables/useProbeTestStream'
+import type { AdapterType, TelemetryK8sClusterRow, TelemetryRow } from '~/types/telemetry'
 
 definePageMeta({ layout: 'admin' })
 const { apiFetch } = useApi()
@@ -113,11 +105,20 @@ const { apiFetch } = useApi()
 const sources = ref<TelemetryRow[]>([])
 const environments = ref<{ id: string; name: string }[]>([])
 const clusters = ref<TelemetryK8sClusterRow[]>([])
-const showModal = ref(false)
-const editing = ref<TelemetryFormInitial | null>(null)
 const drawerTest = ref<TelemetryRow | null>(null)
 const drawerBusy = ref(false)
-const drawerTestRef = ref<{ setResult: (r: Record<string, unknown> | null) => void } | null>(null)
+const drawerVerifyAbortController = ref<AbortController | null>(null)
+
+function abortDrawerVerify() {
+  drawerVerifyAbortController.value?.abort()
+}
+const drawerTestRef = ref<{
+  setResult: (r: Record<string, unknown> | null) => void
+  clearStream?: () => void
+  setStreamHost?: (meta: Record<string, unknown>) => void
+  appendStreamLog?: (stream: string, chunk: string) => void
+  markStreamHeartbeat?: () => void
+} | null>(null)
 
 const deleteOpen = ref(false)
 const deleteForm = ref({
@@ -184,38 +185,16 @@ async function loadMeta() {
   }
 }
 
-function openCreate() {
-  editing.value = null
-  showModal.value = true
+function goCreate() {
+  void navigateTo('/admin/telemetry/new')
 }
 
-function openEdit(t: TelemetryRow) {
-  editing.value = { ...t, config_json: { ...(t.config_json || {}) }, qos_thresholds: { ...(t.qos_thresholds || {}) } }
-  showModal.value = true
+function goEdit(t: TelemetryRow) {
+  void navigateTo(`/admin/telemetry/${t.id}`)
 }
 
-function suggestDuplicateName(sourceName: string): string {
-  const base = sourceName.replace(/( \(copy(?: \d+)?\))+$/i, '').trim() || sourceName.trim()
-  let candidate = `${base} (copy)`
-  let n = 2
-  while (sources.value.some((s) => s.name === candidate)) {
-    candidate = `${base} (copy ${n})`
-    n++
-  }
-  return candidate
-}
-
-function openDuplicate(t: TelemetryRow) {
-  editing.value = {
-    name: suggestDuplicateName(t.name),
-    adapter: t.adapter,
-    config_json: { ...(t.config_json || {}) },
-    qos_thresholds: { ...(t.qos_thresholds || {}) },
-    execution_target: t.execution_target,
-    timeout_ms: t.timeout_ms,
-    retries: t.retries ?? 1,
-  }
-  showModal.value = true
+function goDuplicate(t: TelemetryRow) {
+  void navigateTo({ path: '/admin/telemetry/new', query: { from: t.id } })
 }
 
 const drawerK8sVersion = computed(() => {
@@ -236,15 +215,6 @@ const drawerK8sVersion = computed(() => {
   return ''
 })
 
-function closeModal() {
-  showModal.value = false
-  editing.value = null
-}
-
-async function onSaved() {
-  await load()
-}
-
 function openTest(t: TelemetryRow) {
   drawerTest.value = t
 }
@@ -252,6 +222,8 @@ function openTest(t: TelemetryRow) {
 async function runSavedTest(payload: Record<string, unknown>) {
   if (!drawerTest.value) return
   drawerBusy.value = true
+  drawerVerifyAbortController.value = new AbortController()
+  const signal = drawerVerifyAbortController.value.signal
   drawerTestRef.value?.setResult(null)
   try {
     const t = drawerTest.value
@@ -264,14 +236,29 @@ async function runSavedTest(payload: Record<string, unknown>) {
     }
     if (payload.environment_id) body.environment_id = payload.environment_id
     if (payload.test_connect_only) body.test_connect_only = true
-    const res = (await apiFetch('/api/admin/probes/test', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })) as Record<string, unknown>
+    drawerTestRef.value?.clearStream?.()
+    const res = (await postProbeTestStream(
+      JSON.stringify(body),
+      {
+        onHost: (meta) => drawerTestRef.value?.setStreamHost?.(meta),
+        onLog: (stream, chunk) => drawerTestRef.value?.appendStreamLog?.(stream, chunk),
+        onHeartbeat: () => drawerTestRef.value?.markStreamHeartbeat?.(),
+      },
+      { signal },
+    )) as Record<string, unknown>
     drawerTestRef.value?.setResult(res)
   } catch (e: unknown) {
+    if (e instanceof ProbeStreamAbortedError) {
+      drawerTestRef.value?.setResult({
+        success: false,
+        operational_ok: false,
+        error: 'Verify cancelled',
+      })
+      return
+    }
     drawerTestRef.value?.setResult({ success: false, error: e instanceof Error ? e.message : 'Failed' })
   } finally {
+    drawerVerifyAbortController.value = null
     drawerBusy.value = false
   }
 }

@@ -4,7 +4,7 @@
     <div class="telemetry-link-help__body">
       <p>
         <strong>Interval</strong>
-        — How often the scheduler runs this probe (seconds between runs) for this link.
+        — How often the scheduler runs this probe (minutes between runs) for this link.
       </p>
       <p>
         <strong>Window</strong>

@@ -1,7 +1,18 @@
 <template>
   <div class="service-card" :class="{ 'service-card--nested': variant === 'nested' }">
     <div class="card-header">
-      <span class="card-name">{{ item.name }}</span>
+      <div class="card-title-group">
+        <span class="card-name">{{ item.name }}</span>
+        <button
+          v-if="variant === 'nested' && showProbeHistory"
+          type="button"
+          class="btn btn-sm card-probe-history"
+          @click="emit('probe-history')"
+        >
+          History
+        </button>
+        <slot v-if="variant === 'default'" name="title-actions" />
+      </div>
       <span class="card-status" :class="'status--' + item.status">{{ statusLabel }}</span>
     </div>
     <div
@@ -50,8 +61,19 @@
           <div class="uptime-day-popover__related-label">Related incidents</div>
           <ul class="uptime-day-popover__list">
             <li v-for="inc in popoverRelated" :key="inc.id" class="uptime-day-popover__li">
-              <span class="uptime-day-popover__inc-title">{{ inc.title }}</span>
-              <span class="uptime-day-popover__meta">{{ incidentMetaLine(inc, popoverDay.date) }}</span>
+              <NuxtLink
+                v-if="historyLinkReady"
+                :to="incidentHistoryTo(inc.id)"
+                class="uptime-day-popover__link"
+                @click="closePopover"
+              >
+                <span class="uptime-day-popover__inc-title">{{ inc.title }}</span>
+                <span class="uptime-day-popover__meta">{{ incidentMetaLine(inc, popoverDay.date) }}</span>
+              </NuxtLink>
+              <template v-else>
+                <span class="uptime-day-popover__inc-title">{{ inc.title }}</span>
+                <span class="uptime-day-popover__meta">{{ incidentMetaLine(inc, popoverDay.date) }}</span>
+              </template>
             </li>
           </ul>
         </div>
@@ -83,13 +105,26 @@ const props = withDefaults(
     recentIncidents?: PublicIncidentStub[] | null
     /** When set (nested telemetry row), filter incidents by source_telemetry_id or null (legacy). */
     telemetryId?: string | null
+    /** Nested row: show History control (operational probe samples). */
+    showProbeHistory?: boolean
+    /** Parent resource for History deep links (omit both to skip linking). */
+    historyTargetType?: 'environment' | 'service' | null
+    /** Public slug of the environment or service (not telemetry id). */
+    historyParentSlug?: string | null
   }>(),
   {
     variant: 'default',
     recentIncidents: null,
     telemetryId: null,
+    showProbeHistory: false,
+    historyTargetType: null,
+    historyParentSlug: null,
   },
 )
+
+const emit = defineEmits<{
+  'probe-history': []
+}>()
 
 const barRef = ref<HTMLElement | null>(null)
 const popoverRef = ref<HTMLElement | null>(null)
@@ -101,6 +136,27 @@ const popoverStyle = ref<Record<string, string>>({})
 const popoverRelated = ref<PublicIncidentStub[]>([])
 
 const popoverOpen = computed(() => popoverDay.value != null && activeIndex.value != null)
+
+const historyLinkReady = computed(
+  () =>
+    props.historyTargetType != null &&
+    props.historyParentSlug != null &&
+    props.historyParentSlug !== '',
+)
+
+function incidentHistoryTo(incidentId: string) {
+  const q: Record<string, string> = {
+    tab: 'incidents',
+    incident: incidentId,
+  }
+  const tt = props.historyTargetType
+  const slug = props.historyParentSlug?.trim()
+  if (tt && slug) {
+    q.target_type = tt
+    q.component = `${tt}:${slug}`
+  }
+  return { path: '/history', query: q }
+}
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -195,7 +251,8 @@ function incidentMetaLine(inc: PublicIncidentStub, iso: string): string {
   const overlapEnd = Math.min(e, end)
   const dur = formatDurationShort(overlapEnd - overlapStart)
   if (dur) parts.push(dur)
-  if (inc.status === 'resolved') parts.push('resolved')
+  if (inc.status === 'auto_resolved') parts.push('recovered')
+  else if (inc.status === 'manually_resolved' || inc.status === 'resolved') parts.push('manually resolved')
   else parts.push(inc.status)
   return parts.join(' · ')
 }
@@ -309,10 +366,31 @@ const timelineDays = computed((): TimelineDay[] => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 8px;
 }
-.card-name { font-weight: 600; font-size: 0.95rem; }
-.card-status { font-size: 0.8rem; font-weight: 500; }
+.card-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+  flex: 1;
+}
+.card-name { font-weight: 600; font-size: 0.95rem; min-width: 0; }
+.card-probe-history {
+  flex-shrink: 0;
+  margin-right: 0;
+}
+.service-card--nested .card-probe-history {
+  margin-right: 0;
+}
+.card-status {
+  font-size: 0.8rem;
+  font-weight: 500;
+  flex-shrink: 0;
+  text-align: right;
+}
 .status--operational { color: var(--color-green); }
 .status--disruption { color: var(--color-red); }
 .card-bar { display: flex; gap: 1px; height: 28px; margin-bottom: 4px; }
@@ -380,6 +458,17 @@ const timelineDays = computed((): TimelineDay[] => {
 .uptime-day-popover__li:first-child {
   border-top: none;
   padding-top: 0;
+}
+.uptime-day-popover__link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 4px;
+  margin: -2px;
+  padding: 2px;
+}
+.uptime-day-popover__link:hover .uptime-day-popover__inc-title {
+  text-decoration: underline;
 }
 .uptime-day-popover__inc-title {
   display: block;

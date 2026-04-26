@@ -3,6 +3,7 @@ package public
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,6 +190,7 @@ type telemetryBreakdownRow struct {
 	TelemetryID            string              `json:"telemetry_id"`
 	Name                   string              `json:"name"`
 	DisplayName            string              `json:"display_name,omitempty"`
+	Adapter                string              `json:"adapter"`
 	Status                 string              `json:"status"`
 	UptimePct              float64             `json:"uptime_pct"`
 	Days                   []store.DailyRollup `json:"days"`
@@ -231,6 +233,7 @@ func (h *StatusHandler) EnvironmentTelemetryBreakdown(w http.ResponseWriter, r *
 		row := telemetryBreakdownRow{
 			TelemetryID:            link.TelemetryID.String(),
 			Name:                   tel.Name,
+			Adapter:                tel.Adapter,
 			HasPerTelemetrySamples: hasSamples,
 			Status:                 "operational",
 			UptimePct:              100,
@@ -301,6 +304,7 @@ func (h *StatusHandler) ServiceTelemetryBreakdown(w http.ResponseWriter, r *http
 		row := telemetryBreakdownRow{
 			TelemetryID:            link.TelemetryID.String(),
 			Name:                   tel.Name,
+			Adapter:                tel.Adapter,
 			HasPerTelemetrySamples: hasSamples,
 			Status:                 "operational",
 			UptimePct:              100,
@@ -381,6 +385,124 @@ func (h *StatusHandler) EnvironmentTopology(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	handler.WriteJSON(w, http.StatusOK, topo)
+}
+
+// parsePublicTelemetrySamplesQuery reads telemetry_id, probe_kind, and limit from the request (same rules as admin telemetry-samples).
+func parsePublicTelemetrySamplesQuery(r *http.Request) (telemetryID uuid.UUID, probeKind string, limit int, errMsg string) {
+	telStr := strings.TrimSpace(r.URL.Query().Get("telemetry_id"))
+	if telStr == "" {
+		return uuid.Nil, "", 0, "telemetry_id is required"
+	}
+	tid, err := uuid.Parse(telStr)
+	if err != nil {
+		return uuid.Nil, "", 0, "invalid telemetry_id"
+	}
+	pk := strings.TrimSpace(r.URL.Query().Get("probe_kind"))
+	if pk == "" {
+		pk = "operational"
+	}
+	if pk != "operational" && pk != "qos" {
+		return uuid.Nil, "", 0, "probe_kind must be operational or qos"
+	}
+	lim := 50
+	if ls := strings.TrimSpace(r.URL.Query().Get("limit")); ls != "" {
+		n, err := strconv.Atoi(ls)
+		if err != nil || n < 1 {
+			return uuid.Nil, "", 0, "invalid limit"
+		}
+		lim = n
+	}
+	return tid, pk, lim, ""
+}
+
+// ServiceTelemetrySamples returns recent sample_results for one linked telemetry on a public service (404 if missing or not public).
+func (h *StatusHandler) ServiceTelemetrySamples(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	svc, err := h.store.GetServiceBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "service not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load service")
+		return
+	}
+	if !svc.IsPublic {
+		handler.WriteError(w, http.StatusNotFound, "service not found")
+		return
+	}
+	telemetryID, probeKind, limit, errMsg := parsePublicTelemetrySamplesQuery(r)
+	if errMsg != "" {
+		handler.WriteError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	links, err := h.store.ListServiceTelemetryLinks(r.Context(), &svc.ID)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load telemetry links")
+		return
+	}
+	linked := false
+	for _, l := range links {
+		if l.TelemetryID == telemetryID {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		handler.WriteError(w, http.StatusForbidden, "telemetry is not linked to this service")
+		return
+	}
+	samples, err := h.store.ListRecentSamplesForServiceTelemetry(r.Context(), svc.ID, telemetryID, probeKind, limit)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to list samples")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, map[string]any{"samples": samples})
+}
+
+// EnvironmentTelemetrySamples returns recent sample_results for one linked telemetry on a public environment (404 if missing or not public).
+func (h *StatusHandler) EnvironmentTelemetrySamples(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	env, err := h.store.GetEnvironmentBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			handler.WriteError(w, http.StatusNotFound, "environment not found")
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load environment")
+		return
+	}
+	if !env.IsPublic {
+		handler.WriteError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+	telemetryID, probeKind, limit, errMsg := parsePublicTelemetrySamplesQuery(r)
+	if errMsg != "" {
+		handler.WriteError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	links, err := h.store.ListEnvironmentTelemetryLinks(r.Context(), &env.ID)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to load telemetry links")
+		return
+	}
+	linked := false
+	for _, l := range links {
+		if l.TelemetryID == telemetryID {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		handler.WriteError(w, http.StatusForbidden, "telemetry is not linked to this environment")
+		return
+	}
+	samples, err := h.store.ListRecentSamplesForEnvironmentTelemetry(r.Context(), env.ID, telemetryID, probeKind, limit)
+	if err != nil {
+		handler.WriteError(w, http.StatusInternalServerError, "failed to list samples")
+		return
+	}
+	handler.WriteJSON(w, http.StatusOK, map[string]any{"samples": samples})
 }
 
 func (h *StatusHandler) ListServices(w http.ResponseWriter, r *http.Request) {

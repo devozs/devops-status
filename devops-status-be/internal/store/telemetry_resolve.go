@@ -23,9 +23,52 @@ func (s *Store) ResolveTelemetryProbeConfig(ctx context.Context, sec *secrets.St
 		return s.resolvePrometheusFromProvider(ctx, sec, raw)
 	case "liveness":
 		return s.resolveLivenessProbeConfig(ctx, sec, raw)
+	case "hlctl":
+		return s.resolveHlctlFromProvider(ctx, sec, raw)
 	default:
 		return raw, nil
 	}
+}
+
+func (s *Store) resolveHlctlFromProvider(ctx context.Context, sec *secrets.Store, raw json.RawMessage) (json.RawMessage, error) {
+	if sec == nil {
+		return nil, fmt.Errorf("secrets store required for hlctl telemetry")
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("parse hlctl config: %w", err)
+	}
+	spIDStr, _ := cfg["service_provider_id"].(string)
+	spIDStr = strings.TrimSpace(spIDStr)
+	if spIDStr == "" {
+		return nil, fmt.Errorf("service_provider_id is required for hlctl telemetry")
+	}
+	spID, err := uuid.Parse(spIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid service_provider_id")
+	}
+	p, err := s.GetServiceProviderByID(ctx, spID)
+	if err != nil {
+		return nil, fmt.Errorf("service provider: %w", err)
+	}
+	if p.ProviderType != "hlctl" {
+		return nil, fmt.Errorf("service provider is not hlctl type")
+	}
+	creds, err := sec.ReadServiceProviderHTTPBasic(ctx, spID, secrets.KeyHlctlCreds)
+	if err != nil {
+		return nil, fmt.Errorf("hlctl provider credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.Username) == "" || creds.Password == "" {
+		return nil, fmt.Errorf("hlctl service provider has no stored username/password")
+	}
+	cfg["_hlctl_username"] = creds.Username
+	cfg["_hlctl_password"] = creds.Password
+	delete(cfg, "service_provider_id")
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal hlctl config: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Store) resolveHTTPFromProvider(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
@@ -116,7 +159,7 @@ func (s *Store) resolvePrometheusFromProvider(ctx context.Context, sec *secrets.
 	if p.ProviderType != "prometheus" {
 		return nil, fmt.Errorf("service provider is not prometheus type")
 	}
-	endpoint, authMethod, err := prometheusEndpointFromProviderConfig(p.ConfigJSON)
+	endpoint, authMethod, insecureSkipTLS, err := prometheusEndpointFromProviderConfig(p.ConfigJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +168,7 @@ func (s *Store) resolvePrometheusFromProvider(ctx context.Context, sec *secrets.
 	}
 	cfg["endpoint"] = endpoint
 	cfg["auth_method"] = authMethod
+	cfg["insecure_skip_tls"] = insecureSkipTLS
 	delete(cfg, "service_provider_id")
 
 	if sec != nil {
@@ -150,21 +194,22 @@ func (s *Store) resolvePrometheusFromProvider(ctx context.Context, sec *secrets.
 	return out, nil
 }
 
-func prometheusEndpointFromProviderConfig(configJSON any) (endpoint, authMethod string, err error) {
+func prometheusEndpointFromProviderConfig(configJSON any) (endpoint, authMethod string, insecureSkipTLS bool, err error) {
 	b, err := json.Marshal(configJSON)
 	if err != nil {
-		return "", "", fmt.Errorf("provider config_json")
+		return "", "", false, fmt.Errorf("provider config_json")
 	}
 	var m struct {
-		Endpoint   string `json:"endpoint"`
-		AuthMethod string `json:"auth_method"`
+		Endpoint        string `json:"endpoint"`
+		AuthMethod      string `json:"auth_method"`
+		InsecureSkipTLS bool   `json:"insecure_skip_tls"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		return "", "", fmt.Errorf("provider config_json")
+		return "", "", false, fmt.Errorf("provider config_json")
 	}
 	am := strings.ToLower(strings.TrimSpace(m.AuthMethod))
 	if am == "" {
 		am = "none"
 	}
-	return strings.TrimSpace(m.Endpoint), am, nil
+	return strings.TrimSpace(m.Endpoint), am, m.InsecureSkipTLS, nil
 }

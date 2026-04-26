@@ -12,7 +12,7 @@ import (
 
 func isAllowedProviderType(pt string) bool {
 	switch pt {
-	case "tcp", "prometheus", "grafana", "elasticsearch", "jenkins", "artifactory", "dns":
+	case "tcp", "prometheus", "grafana", "elasticsearch", "jenkins", "artifactory", "dns", "rancher", "hlctl":
 		return true
 	default:
 		return false
@@ -22,7 +22,7 @@ func isAllowedProviderType(pt string) bool {
 // providerTypeUsesSecretStore is true when create/update may write to secrets for this type.
 func providerTypeUsesSecretStore(pt string) bool {
 	switch pt {
-	case "prometheus", "grafana", "elasticsearch", "jenkins", "artifactory":
+	case "prometheus", "grafana", "elasticsearch", "jenkins", "artifactory", "rancher", "hlctl":
 		return true
 	default:
 		return false
@@ -39,28 +39,31 @@ func secretKeyForHTTPBasicProvider(pt string) (string, bool) {
 		return secrets.KeyJenkinsCreds, true
 	case "artifactory":
 		return secrets.KeyArtifactoryCreds, true
+	case "hlctl":
+		return secrets.KeyHlctlCreds, true
 	default:
 		return "", false
 	}
 }
 
-func parsePrometheusConfigJSON(configJSON any) (endpoint, authMethod string, err error) {
+func parsePrometheusConfigJSON(configJSON any) (endpoint, authMethod string, insecureSkipTLS bool, err error) {
 	b, err := json.Marshal(configJSON)
 	if err != nil {
-		return "", "", errors.New("invalid config_json")
+		return "", "", false, errors.New("invalid config_json")
 	}
 	var m struct {
-		Endpoint   string `json:"endpoint"`
-		AuthMethod string `json:"auth_method"`
+		Endpoint        string `json:"endpoint"`
+		AuthMethod      string `json:"auth_method"`
+		InsecureSkipTLS bool   `json:"insecure_skip_tls"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		return "", "", errors.New("invalid config_json")
+		return "", "", false, errors.New("invalid config_json")
 	}
 	am := strings.ToLower(strings.TrimSpace(m.AuthMethod))
 	if am == "" {
 		am = "none"
 	}
-	return strings.TrimSpace(m.Endpoint), am, nil
+	return strings.TrimSpace(m.Endpoint), am, m.InsecureSkipTLS, nil
 }
 
 func parseBaseURLAuthConfig(configJSON any, field string) (baseURL, authMethod string, err error) {
@@ -105,6 +108,26 @@ func parseArtifactoryConfigJSON(configJSON any) (baseURL, authMethod string, err
 	return parseBaseURLAuthConfig(configJSON, "base_url")
 }
 
+func parseRancherConfigJSON(configJSON any) (baseURL, authMethod string, insecureSkipTLS bool, err error) {
+	b, err := json.Marshal(configJSON)
+	if err != nil {
+		return "", "", false, errors.New("invalid config_json")
+	}
+	var m struct {
+		BaseURL         string `json:"base_url"`
+		AuthMethod      string `json:"auth_method"`
+		InsecureSkipTLS bool   `json:"insecure_skip_tls"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", "", false, errors.New("invalid config_json")
+	}
+	am := strings.ToLower(strings.TrimSpace(m.AuthMethod))
+	if am == "" {
+		am = "none"
+	}
+	return strings.TrimSpace(m.BaseURL), am, m.InsecureSkipTLS, nil
+}
+
 func parseDNSConfigJSON(configJSON any) (hostname, recordType, nameserver string, err error) {
 	b, err := json.Marshal(configJSON)
 	if err != nil {
@@ -142,10 +165,11 @@ func validateDNSRecordType(rt string) bool {
 	}
 }
 
-func prometheusConfigMap(endpoint, authMethod string) map[string]any {
+func prometheusConfigMap(endpoint, authMethod string, insecureSkipTLS bool) map[string]any {
 	return map[string]any{
-		"endpoint":    strings.TrimSpace(endpoint),
-		"auth_method": strings.ToLower(strings.TrimSpace(authMethod)),
+		"endpoint":          strings.TrimSpace(endpoint),
+		"auth_method":       strings.ToLower(strings.TrimSpace(authMethod)),
+		"insecure_skip_tls": insecureSkipTLS,
 	}
 }
 
@@ -153,6 +177,14 @@ func baseURLAuthConfigMap(field, value, authMethod string) map[string]any {
 	return map[string]any{
 		field:         strings.TrimSpace(value),
 		"auth_method": strings.ToLower(strings.TrimSpace(authMethod)),
+	}
+}
+
+func rancherConfigMap(baseURL, authMethod string, insecureSkipTLS bool) map[string]any {
+	return map[string]any{
+		"base_url":            strings.TrimSpace(baseURL),
+		"auth_method":         strings.ToLower(strings.TrimSpace(authMethod)),
+		"insecure_skip_tls":   insecureSkipTLS,
 	}
 }
 
@@ -173,8 +205,8 @@ func normalizeServiceProviderConfigForSave(pt string, input *store.CreateService
 	case "tcp":
 		input.ConfigJSON = map[string]any{}
 	case "prometheus":
-		endpoint, authMethod, _ := parsePrometheusConfigJSON(input.ConfigJSON)
-		input.ConfigJSON = prometheusConfigMap(endpoint, authMethod)
+		endpoint, authMethod, insecureSkipTLS, _ := parsePrometheusConfigJSON(input.ConfigJSON)
+		input.ConfigJSON = prometheusConfigMap(endpoint, authMethod, insecureSkipTLS)
 		input.Host, input.Port = "", 0
 	case "grafana":
 		u, am, _ := parseGrafanaConfigJSON(input.ConfigJSON)
@@ -196,6 +228,13 @@ func normalizeServiceProviderConfigForSave(pt string, input *store.CreateService
 		h, rt, ns, _ := parseDNSConfigJSON(input.ConfigJSON)
 		input.ConfigJSON = dnsConfigMap(h, rt, ns)
 		input.Host, input.Port = "", 0
+	case "rancher":
+		u, am, skip, _ := parseRancherConfigJSON(input.ConfigJSON)
+		input.ConfigJSON = rancherConfigMap(u, am, skip)
+		input.Host, input.Port = "", 0
+	case "hlctl":
+		input.ConfigJSON = map[string]any{}
+		input.Host, input.Port = "", 0
 	}
 }
 
@@ -212,7 +251,7 @@ func validateServiceProviderInput(pt, host string, port int, configJSON any) err
 			return errors.New("port must be between 1 and 65535 for tcp")
 		}
 	case "prometheus":
-		endpoint, authMethod, err := parsePrometheusConfigJSON(configJSON)
+		endpoint, authMethod, _, err := parsePrometheusConfigJSON(configJSON)
 		if err != nil {
 			return err
 		}
@@ -292,6 +331,22 @@ func validateServiceProviderInput(pt, host string, port int, configJSON any) err
 		if !validateDNSRecordType(recordType) {
 			return errors.New("dns record_type must be a, aaaa, cname, or txt")
 		}
+	case "rancher":
+		baseURL, authMethod, _, err := parseRancherConfigJSON(configJSON)
+		if err != nil {
+			return err
+		}
+		if baseURL == "" {
+			return errors.New("rancher base_url is required in config_json")
+		}
+		if u, err := url.Parse(baseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return errors.New("rancher base_url must be a valid http(s) URL")
+		}
+		if authMethod != "none" && authMethod != "bearer" {
+			return errors.New("invalid auth_method in config_json")
+		}
+	case "hlctl":
+		// Credentials stored in secrets; config_json is empty object.
 	}
 	return nil
 }

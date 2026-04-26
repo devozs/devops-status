@@ -70,13 +70,14 @@ func RunCLIMetricShellProbe(ctx context.Context, a Adapter, cfgRaw, qosRaw json.
 		return nil, fmt.Errorf("parse cli config: %w", err)
 	}
 	var qos struct {
-		ValueKind       string  `json:"value_kind"`
-		GreenOperator   string  `json:"green_operator"`
-		GreenThreshold  float64 `json:"green_threshold"`
-		YellowOperator  string  `json:"yellow_operator"`
-		YellowThreshold float64 `json:"yellow_threshold"`
-		GreenText       string  `json:"green_text"`
-		YellowText      string  `json:"yellow_text"`
+		ValueKind        string  `json:"value_kind"`
+		NumericValuePick string  `json:"numeric_value_pick,omitempty"`
+		GreenOperator    string  `json:"green_operator"`
+		GreenThreshold   float64 `json:"green_threshold"`
+		YellowOperator   string  `json:"yellow_operator"`
+		YellowThreshold  float64 `json:"yellow_threshold"`
+		GreenText        string  `json:"green_text"`
+		YellowText       string  `json:"yellow_text"`
 	}
 	if err := json.Unmarshal(qosRaw, &qos); err != nil {
 		return nil, fmt.Errorf("parse qos: %w", err)
@@ -106,7 +107,12 @@ func RunCLIMetricShellProbe(ctx context.Context, a Adapter, cfgRaw, qosRaw json.
 
 	switch vk {
 	case "number":
-		v, parsed := parseCLINumericOut(stdout, cfg.ParseJSON)
+		r.Metadata["metric_green_band"] = formatMetricNumericBand(qos.GreenOperator, qos.GreenThreshold)
+		r.Metadata["metric_yellow_band"] = formatMetricNumericBand(qos.YellowOperator, qos.YellowThreshold)
+		v, parsed, src := parseCLINumericOut(stdout, cfg.ParseJSON, qos.NumericValuePick)
+		if parsed {
+			r.Metadata["metric_value_source"] = src
+		}
 		operational := exitOk && parsed
 		if operational {
 			r.RawValue = v
@@ -124,6 +130,9 @@ func RunCLIMetricShellProbe(ctx context.Context, a Adapter, cfgRaw, qosRaw json.
 			}
 		}
 	case "text":
+		r.Metadata["metric_value_source"] = "text"
+		r.Metadata["metric_green_band"] = formatMetricTextBand(qos.GreenOperator, qos.GreenText)
+		r.Metadata["metric_yellow_band"] = formatMetricTextBand(qos.YellowOperator, qos.YellowText)
 		textVal := strings.TrimSpace(stdout)
 		r.Metadata["cli_text_value"] = textVal
 		operational := exitOk && textVal != ""
@@ -147,26 +156,43 @@ func RunCLIMetricShellProbe(ctx context.Context, a Adapter, cfgRaw, qosRaw json.
 	return r, nil
 }
 
-func parseCLINumericOut(stdout string, parseJSON bool) (float64, bool) {
+func formatMetricNumericBand(op string, threshold float64) string {
+	return strings.TrimSpace(op) + " " + strconv.FormatFloat(threshold, 'f', -1, 64)
+}
+
+func formatMetricTextBand(op, ref string) string {
+	return strings.TrimSpace(op) + " " + strconv.Quote(strings.TrimSpace(ref))
+}
+
+// parseCLINumericOut returns the parsed float, whether parsing succeeded, and when successful
+// a short source tag for verify UI: "json", "first_number", or "last_number".
+func parseCLINumericOut(stdout string, parseJSON bool, numericValuePick string) (float64, bool, string) {
 	s := strings.TrimSpace(stdout)
 	if s == "" {
-		return 0, false
+		return 0, false, ""
 	}
 	if parseJSON {
 		var st CLIStructuredOutput
 		if json.Unmarshal([]byte(s), &st) == nil {
-			return st.Value, true
+			return st.Value, true, "json"
 		}
 	}
-	m := cliFirstFloatRe.FindString(s)
-	if m == "" {
-		return 0, false
+	matches := cliFirstFloatRe.FindAllString(s, -1)
+	if len(matches) == 0 {
+		return 0, false, ""
+	}
+	pick := strings.ToLower(strings.TrimSpace(numericValuePick))
+	m := matches[0]
+	src := "first_number"
+	if pick == "last" {
+		m = matches[len(matches)-1]
+		src = "last_number"
 	}
 	v, err := strconv.ParseFloat(m, 64)
 	if err != nil {
-		return 0, false
+		return 0, false, ""
 	}
-	return v, true
+	return v, true, src
 }
 
 func cliMetricNumberQoSLevel(gOp string, gTh float64, yOp string, yTh, v float64) string {

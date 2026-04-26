@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/devops-status/be/internal/adapter"
 	"github.com/devops-status/be/internal/handler"
@@ -18,9 +17,9 @@ import (
 )
 
 type ProbeTestHandler struct {
-	store          *store.Store
-	secret         *secrets.Store
-	k8sInsecureTLS bool
+	store            *store.Store
+	secret           *secrets.Store
+	k8sInsecureTLS   bool
 }
 
 func NewProbeTestHandler(s *store.Store, sec *secrets.Store, k8sInsecureTLS bool) *ProbeTestHandler {
@@ -45,50 +44,32 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := adapter.Get(req.Adapter)
+	p, err := h.prepareProbeTest(r.Context(), &req)
 	if err != nil {
-		handler.WriteError(w, http.StatusBadRequest, "unsupported adapter: "+req.Adapter)
-		return
-	}
-
-	cfgBytes, err := json.Marshal(req.ConfigJSON)
-	if err != nil {
-		handler.WriteError(w, http.StatusBadRequest, "invalid config_json")
-		return
-	}
-
-	cfgBytes, err = h.applyEnvironmentBinding(r.Context(), req, cfgBytes)
-	if err != nil {
-		msg := err.Error()
-		if errors.Is(err, pgx.ErrNoRows) {
-			msg = "no connected kubernetes cluster for this environment"
+		var mergeErr *mergeK8sProbeConfigError
+		if errors.As(err, &mergeErr) {
+			handler.WriteError(w, http.StatusInternalServerError, "failed to merge k8s config")
+			return
 		}
-		handler.WriteError(w, http.StatusBadRequest, msg)
+		var br *probeTestBadRequestErr
+		if errors.As(err, &br) {
+			handler.WriteError(w, http.StatusBadRequest, br.msg)
+			return
+		}
+		handler.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	cfgBytes, err = h.store.MergeKubernetesProbeConfig(r.Context(), req.Adapter, cfgBytes, h.k8sInsecureTLS)
-	if err != nil {
-		handler.WriteError(w, http.StatusInternalServerError, "failed to merge k8s config")
-		return
-	}
-
-	cfgBytes, err = h.store.ResolveTelemetryProbeConfig(r.Context(), h.secret, req.Adapter, cfgBytes)
-	if err != nil {
-		handler.WriteError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	qosBytes, _ := json.Marshal(req.QosThresholds)
+	qosBytes := p.QosBytes
 
 	if req.Adapter == "prometheus" && req.TestConnectOnly {
 		var pc adapter.PrometheusConfig
-		_ = json.Unmarshal(cfgBytes, &pc)
+		_ = json.Unmarshal(p.CfgBytes, &pc)
 		if err := adapter.TestPrometheusConnectivity(r.Context(), pc); err != nil {
 			handler.WriteJSON(w, http.StatusOK, map[string]any{
-				"success":         false,
-				"operational_ok":  false,
-				"error":           err.Error(),
+				"success":        false,
+				"operational_ok": false,
+				"error":          err.Error(),
 			})
 			return
 		}
@@ -100,45 +81,10 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	testCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	testCtx, cancel := context.WithTimeout(ctx, probeTestContextTimeout(req.Adapter, p.CfgBytes))
 	defer cancel()
 
-	var result *adapter.ProbeResult
-	shellMetric := adapter.HasCLIMetricQoS(cfgBytes, qosBytes)
-	var livenessShellMetric bool
-	var livenessInner json.RawMessage
-	var livenessSynQos []byte
-	if req.Adapter == "liveness" {
-		var w struct {
-			LivenessCheck string          `json:"liveness_check"`
-			Config        json.RawMessage `json:"config"`
-		}
-		if json.Unmarshal(cfgBytes, &w) == nil && strings.EqualFold(strings.TrimSpace(w.LivenessCheck), "kubernetes") {
-			var kc adapter.KubernetesConfig
-			if json.Unmarshal(w.Config, &kc) == nil && strings.TrimSpace(kc.CLIShell) != "" {
-				if syn, ok := adapter.BuildSyntheticMetricQoSFromLivenessValue(qosBytes); ok && adapter.HasCLIMetricQoS(w.Config, syn) {
-					livenessShellMetric = true
-					livenessInner = w.Config
-					livenessSynQos = syn
-				}
-			}
-		}
-	}
-
-	if (req.Adapter == "cli" || req.Adapter == "kubernetes") && shellMetric {
-		result, err = adapter.RunCLIMetricShellProbe(testCtx, a, cfgBytes, qosBytes)
-	} else if req.Adapter == "liveness" && livenessShellMetric {
-		ka, kerr := adapter.Get("kubernetes")
-		if kerr != nil {
-			err = kerr
-		} else {
-			result, err = adapter.RunCLIMetricShellProbe(testCtx, ka, livenessInner, livenessSynQos)
-		}
-	} else if req.Adapter == "cli" && adapter.HasCLIPQoSThresholds(qosBytes) {
-		result, err = adapter.RunCLIPQoSProbe(testCtx, a, cfgBytes, qosBytes)
-	} else {
-		result, err = a.Probe(testCtx, cfgBytes)
-	}
+	result, err := h.executeProbeTest(testCtx, p)
 	if err != nil {
 		handler.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":        false,
@@ -161,7 +107,7 @@ func (h *ProbeTestHandler) Test(w http.ResponseWriter, r *http.Request) {
 		"error":          result.Error,
 		"probed_at":      result.ProbedAt,
 	}
-	if req.Adapter == "cli" || (req.Adapter == "kubernetes" && shellMetric) || (req.Adapter == "liveness" && livenessShellMetric) {
+	if req.Adapter == "cli" || req.Adapter == "hlctl" || (req.Adapter == "kubernetes" && p.ShellMetric) || (req.Adapter == "liveness" && p.LivenessShellMetric) {
 		out["cli_logs"] = probeTestCLILogs(result.Metadata)
 	}
 	if lvl != "" {
@@ -175,7 +121,11 @@ func probeTestCLILogs(meta map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	out := make(map[string]any)
-	for _, k := range []string{"cli_stdout", "cli_stderr", "cli_runner", "cli_image", "cli_log_combined", "cli_qos_attempts", "cli_text_value", "value_kind", "exit_code", "job", "namespace"} {
+	for _, k := range []string{
+		"cli_stdout", "cli_stderr", "cli_runner", "cli_image", "cli_log_combined", "cli_qos_attempts",
+		"cli_text_value", "value_kind", "exit_code", "job", "namespace",
+		"metric_value_source", "metric_green_band", "metric_yellow_band",
+	} {
 		if v, ok := meta[k]; ok {
 			out[k] = v
 		}
@@ -185,6 +135,9 @@ func probeTestCLILogs(meta map[string]any) map[string]any {
 
 func (h *ProbeTestHandler) applyEnvironmentBinding(ctx context.Context, req probeTestRequest, cfgBytes []byte) ([]byte, error) {
 	if req.Adapter == "http" || req.Adapter == "prometheus" {
+		return cfgBytes, nil
+	}
+	if req.Adapter == "hlctl" {
 		return cfgBytes, nil
 	}
 	if req.Adapter == "liveness" {
@@ -269,4 +222,3 @@ func k8sMinorVersionMatch(clusterVer, want string) bool {
 	minor := parts[0] + "." + parts[1]
 	return minor == strings.TrimSpace(want)
 }
-

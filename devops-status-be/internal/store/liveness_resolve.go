@@ -96,13 +96,15 @@ func (s *Store) resolveLivenessFromServiceProvider(ctx context.Context, sec *sec
 		return s.livenessWireJenkins(ctx, sec, p)
 	case "artifactory":
 		return s.livenessWireArtifactory(ctx, sec, p, telAf)
+	case "rancher":
+		return s.livenessWireRancher(ctx, sec, p)
 	default:
 		return nil, fmt.Errorf("service provider type %q is not supported for liveness telemetry", p.ProviderType)
 	}
 }
 
 func (s *Store) livenessWirePrometheus(ctx context.Context, sec *secrets.Store, p *model.ServiceProvider) (json.RawMessage, error) {
-	endpoint, authMethod, err := prometheusEndpointFromProviderConfig(p.ConfigJSON)
+	endpoint, authMethod, insecureSkipTLS, err := prometheusEndpointFromProviderConfig(p.ConfigJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +120,7 @@ func (s *Store) livenessWirePrometheus(ctx context.Context, sec *secrets.Store, 
 		"operator":    "gte",
 		"threshold":   0.0,
 	}
+	cfg["insecure_skip_tls"] = insecureSkipTLS
 	if sec != nil {
 		creds, err := sec.ReadServiceProviderPrometheusCredentials(ctx, p.ID)
 		if err != nil {
@@ -138,6 +141,26 @@ func (s *Store) livenessWirePrometheus(ctx context.Context, sec *secrets.Store, 
 		return nil, err
 	}
 	return marshalLivenessWire("prometheus", inner)
+}
+
+func rancherConnFromProviderJSON(configJSON any) (baseURL, authMethod string, insecureSkipTLS bool, err error) {
+	b, err := json.Marshal(configJSON)
+	if err != nil {
+		return "", "", false, fmt.Errorf("provider config_json")
+	}
+	var m struct {
+		BaseURL         string `json:"base_url"`
+		AuthMethod      string `json:"auth_method"`
+		InsecureSkipTLS bool   `json:"insecure_skip_tls"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", "", false, fmt.Errorf("provider config_json")
+	}
+	am := strings.ToLower(strings.TrimSpace(m.AuthMethod))
+	if am == "" {
+		am = "none"
+	}
+	return strings.TrimSpace(m.BaseURL), am, m.InsecureSkipTLS, nil
 }
 
 func urlAuthFromProviderJSON(configJSON any, field string) (urlStr, authMethod string, err error) {
@@ -269,4 +292,29 @@ func (s *Store) livenessWireArtifactory(ctx context.Context, sec *secrets.Store,
 		return nil, err
 	}
 	return marshalLivenessWire("artifactory", inner)
+}
+
+func (s *Store) livenessWireRancher(ctx context.Context, sec *secrets.Store, p *model.ServiceProvider) (json.RawMessage, error) {
+	baseURL, authMethod, insecureSkipTLS, err := rancherConnFromProviderJSON(p.ConfigJSON)
+	if err != nil || baseURL == "" {
+		return nil, fmt.Errorf("rancher provider base_url is required")
+	}
+	cfg := map[string]any{
+		"base_url":            baseURL,
+		"auth_method":         authMethod,
+		"insecure_skip_tls":   insecureSkipTLS,
+		"timeout_ms":          15000,
+	}
+	if sec != nil && authMethod == "bearer" {
+		c, err := sec.ReadServiceProviderRancherCredentials(ctx, p.ID)
+		if err != nil {
+			return nil, fmt.Errorf("rancher credentials: %w", err)
+		}
+		cfg["bearer_token"] = c.BearerToken
+	}
+	inner, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return marshalLivenessWire("rancher", inner)
 }

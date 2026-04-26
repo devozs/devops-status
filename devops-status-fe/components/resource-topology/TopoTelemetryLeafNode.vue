@@ -3,6 +3,7 @@ import { Handle, Position } from '@vue-flow/core'
 import type { NodeProps } from '@vue-flow/core'
 import { Activity } from 'lucide-vue-next'
 import type { ResourceTopologyTelemetryRow } from '~/types/resource-topology'
+import { formatTelemetryIntervalMinLabel } from '~/utils/telemetryLinkInterval'
 
 defineProps<NodeProps<{ row: ResourceTopologyTelemetryRow }>>()
 
@@ -24,7 +25,7 @@ function label(row: ResourceTopologyTelemetryRow) {
         <span class="topo-card__title">{{ data?.row ? label(data.row) : '' }}</span>
         <span class="topo-card__meta">Adapter: {{ data?.row?.telemetry.adapter }}</span>
         <span class="topo-card__detail">
-          Interval {{ data?.row?.link.sample_interval_sec }}s · window {{ data?.row?.link.window_size }}
+          Interval {{ data?.row?.link ? formatTelemetryIntervalMinLabel(data.row.link.sample_interval_sec) : '' }} · window {{ data?.row?.link.window_size }}
         </span>
         <span class="topo-card__detail">
           Fail→down {{ data?.row?.link.consecutive_failures_to_down }} · recover {{ data?.row?.link.consecutive_success_to_recover }}
